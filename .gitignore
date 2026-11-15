@@ -4,3 +4,8 @@ dev/dsh-refs/
 *.log
 .DS_Store
 Thumbs.db
+
+# 本机凭据，绝不入库
+dev/npm-auth.conf
+mon3tr.txt
+.npmrc
