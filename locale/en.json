@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Modpack",
+    "description": "Bundle several plugins into one .dshpack and install them in a single pass: full packs carry the payloads, lite packs record names and versions and fetch them from the registry. Each plugin can be packed as upstream-basic or as your local copy. Packing always runs an in-memory scan for secrets and risky code (masked, never written to disk); installing re-checks integrity, compatibility and licences, then re-applies the packed config, with an option to install without enabling. Categories, search, sorting and entries come from the same plugin-market catalog (first screen lists only what you have), and the UI can be shown in settings, the sidebar or the plugins tab, each switchable.",
+    "detail": "docs/DETAIL.md"
+  }
+}
