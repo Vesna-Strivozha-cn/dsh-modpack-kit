@@ -398,8 +398,8 @@ window.__ModuleLoader__.load({
           h("b", null, "打包就是把这些插件打成一个 .dshpack"),
           "　完整版连插件本体一起装进包里；轻量版只记录名字和版本，装的时候联网按版本取。两种都不改你的 profile，直到你真的点安装。",
           status && status.market && status.market.installed
-            ? h("div", { style: { ...hint, marginTop: "6px" } }, "插件市场 v" + status.market.version + " 已装：目录、本机列表、安装链路都是同一条；本插件不依赖它，拆掉也照常跑。")
-            : null,
+            ? h("div", { style: { ...hint, marginTop: "6px" } }, "插件市场 v" + status.market.version + " 已装：目录、本机列表、安装链路都是同一条；本插件不依赖它，拆掉也照常打包与装包。")
+            : h("div", { style: { ...hint, marginTop: "6px" } }, "没装插件市场也能用：打包、装包、检测全在本地跑。建议先装一下 dshmarket —— 分类、搜索、「（切换市场版）」会更顺手；不装的话第一次自己点一次「建立目录索引」即可，其余体验不受影响。"),
           h("div", { style: hint }, "市场里若有同名插件，那多半就是它的市场版：行末小字「（切换市场版）」可以改成打上游原版，装出来和你从市场装一样。")),
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "10px" } },
           h("div", { style: row },
