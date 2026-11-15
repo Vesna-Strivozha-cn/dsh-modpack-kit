@@ -318,6 +318,12 @@ export default {
       const options = body.options && typeof body.options === 'object' ? body.options : {}
       const dir = profileDir()
       const installed = installedOrEmpty()
+      // 市场目录里能查到的插件：风险项默认放行，但需调用方 acknowledge
+      let trusted = []
+      try {
+        const look = lookupPlugins(config, selection.map((item) => String(item.name || '')).filter(Boolean))
+        trusted = Object.keys(look || {})
+      } catch { trusted = [] }
       try {
         const result = await buildPack({
           selection: selection.map((item) => ({
@@ -333,6 +339,8 @@ export default {
             includeLocalEdits: options.includeLocalEdits === true,
             confirmLicense: options.confirmLicense === true,
             force: options.force === true,
+            acknowledge: options.acknowledge === true,
+            trusted,
             keepLocal: options.keepLocal !== false,
             // 扫描是强制的，客户端传什么都不认
             scanBeforePack: true,
@@ -369,7 +377,14 @@ export default {
         })
       } catch (error) {
         if (error instanceof PackRefused) {
-          json(res, 200, { ok: false, refused: true, error: error.message, scan: error.scan })
+          json(res, 200, {
+            ok: false,
+            refused: true,
+            needsAck: error.needsAck === true,
+            trustedOnly: error.trustedOnly === true,
+            error: error.message,
+            scan: error.scan,
+          })
           return
         }
         json(res, 200, { ok: false, error: String((error && error.message) || error) })

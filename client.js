@@ -190,7 +190,6 @@ window.__ModuleLoader__.load({
       const [options, setOptions] = useState({
         includePayload: true,
         includeConfig: true,
-        includeLocalEdits: false,
         scanBeforePack: true,
         confirmLicense: false,
         name: "DSH 整合包",
@@ -320,7 +319,7 @@ window.__ModuleLoader__.load({
             name: entry.name,
             source: entry.source,
             spec: entry.version || "",
-            mode: entry.source === "profile" ? (options.includeLocalEdits ? "local" : "base") : "base",
+            mode: "base",
           }
           return next
         })
@@ -334,11 +333,20 @@ window.__ModuleLoader__.load({
           ...prev,
           [entry.name]: toMarket
             ? { name: entry.name, source: "npm", spec: entry.marketVersion || "", mode: "base" }
-            : { name: entry.name, source: "profile", spec: entry.version || "", mode: options.includeLocalEdits ? "local" : "base" },
+            : { name: entry.name, source: "profile", spec: entry.version || "", mode: "base" },
         }
       })
 
-      const doPack = async () => {
+      const addAllLocal = () => setSelected((prev) => {
+        const next = { ...prev }
+        for (const entry of localRows) {
+          if (!next[entry.name]) next[entry.name] = { name: entry.name, source: "profile", spec: entry.version || "", mode: "base" }
+        }
+        return next
+      })
+      const clearSelected = () => setSelected({})
+
+      const doPack = async (ack) => {
         setBusy("pack"); setError(""); setResult(null)
         try {
           const data = await api("/pack", {
@@ -346,7 +354,8 @@ window.__ModuleLoader__.load({
             options: {
               includePayload: options.includePayload,
               includeConfig: options.includeConfig,
-              includeLocalEdits: options.includeLocalEdits,
+              acknowledge: ack === true,
+              force: false,
               scanBeforePack: options.scanBeforePack,
               confirmLicense: options.confirmLicense,
               name: options.name,
@@ -355,7 +364,10 @@ window.__ModuleLoader__.load({
             },
           })
           if (!data) { setError("没有响应"); return }
-          if (!data.ok) { setResult({ refused: data.refused, error: data.error, scan: data.scan }); return }
+          if (!data.ok) {
+            setResult({ refused: data.refused, needsAck: data.needsAck === true, trustedOnly: data.trustedOnly === true, error: data.error, scan: data.scan })
+            return
+          }
           setResult(data)
         } catch (e) {
           setError(String((e && e.message) || e))
@@ -395,17 +407,19 @@ window.__ModuleLoader__.load({
 
       return h("div", { style: { display: "flex", flexDirection: "column", gap: "14px" } },
         h(Notice, null,
-          h("b", null, "打包就是把这些插件打成一个 .dshpack"),
-          "　完整版连插件本体一起装进包里；轻量版只记录名字和版本，装的时候联网按版本取。两种都不改你的 profile，直到你真的点安装。",
+          h("b", null, "打包：将所选插件封装为一个 .dshpack 文件"),
+          "　完整版包含插件本体的全部文件；轻量版仅记录插件名称与版本，安装时按版本从插件市场下载。两种包在安装前均不修改 profile 内容。",
           status && status.market && status.market.installed
-            ? h("div", { style: { ...hint, marginTop: "6px" } }, "插件市场 v" + status.market.version + " 已装：目录、本机列表、安装链路都是同一条；本插件不依赖它，拆掉也照常打包与装包。")
-            : h("div", { style: { ...hint, marginTop: "6px" } }, "没装插件市场也能用：打包、装包、检测全在本地跑。建议先装一下 dshmarket —— 分类、搜索、「（切换市场版）」会更顺手；不装的话第一次自己点一次「建立目录索引」即可，其余体验不受影响。"),
-          h("div", { style: hint }, "市场里若有同名插件，那多半就是它的市场版：行末小字「（切换市场版）」可以改成打上游原版，装出来和你从市场装一样。")),
+            ? h("div", { style: { ...hint, marginTop: "6px" } }, "已检测到插件市场 v" + status.market.version + "：本插件与其共用目录源与安装链路，但不依赖该插件，移除后打包与安装功能不受影响。")
+            : h("div", { style: { ...hint, marginTop: "6px" } }, "未检测到插件市场，功能不受影响：打包、安装与检测均在本地完成。建议先安装 dshmarket 以获得分类、搜索与「切换市场版」入口；未安装时，首次使用请点击「建立目录索引」。"),
+          h("div", { style: hint }, "目录中存在同名插件时，该条目末尾提供「（切换市场版）」入口：可将打包源切换为上架市场的上游原版，安装结果与从市场安装一致。")),
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "10px" } },
           h("div", { style: row },
             h("div", { style: strong }, "选择插件"),
             h("input", { style: { ...input, flex: "1 1 200px" }, placeholder: "搜索插件名 / 描述（在插件市场目录里搜）", value: query, onChange: (e) => setQuery(e.target.value) }),
             active ? h("button", { style: btn, onClick: () => { setQuery(""); setCategory("all") } }, "回到已装") : null,
+            h("button", { style: btn, onClick: addAllLocal, title: "把本机已装的全部插件加入选择（默认按基础配置打包，可逐个改）" }, "全部加入"),
+            h("button", { style: btn, disabled: picked.length === 0, onClick: clearSelected, title: "清空当前选择" }, "清除选择"),
             h("span", { style: hint }, loading ? "读取中…" : active
               ? ("已选 " + picked.length + " · 匹配 " + search.total + " 条" + (searching ? " · 搜索中…" : "") + (search.total > rows.length ? " · 已加载 " + rows.length : ""))
               : ("已选 " + picked.length + " 个 · 本机已装 " + localRows.length + " 个"))),
@@ -425,7 +439,7 @@ window.__ModuleLoader__.load({
           search.error ? h("div", { style: { ...hint, color: "#ffb020" } }, search.error) : null,
           h("div", { style: { display: "flex", flexDirection: "column", gap: "3px", maxHeight: "320px", overflow: "auto" } },
             rows.length === 0
-              ? h("div", { style: hint }, loading ? "稍等…" : active ? (searching ? "搜索中…" : "没有匹配的插件") : "本机还没有装插件")
+              ? h("div", { style: hint }, loading ? "读取中…" : active ? (searching ? "搜索中…" : "无匹配条目") : "本机尚未安装插件")
               : rows.map((entry) => {
               const on = Boolean(selected[entry.name])
               return h("div", { key: entry.name, style: { display: "flex", gap: "8px", alignItems: "center", padding: "5px 2px", borderTop: "0.5px solid var(--dsw-alias-border-l2)", flexWrap: "wrap" } },
@@ -462,7 +476,6 @@ window.__ModuleLoader__.load({
           h("div", { style: { ...row, rowGap: "6px" } },
             h(Switch, { checked: options.includePayload, label: "包含插件本体（关=轻量版）", onChange: (v) => setOptions({ ...options, includePayload: v }) }),
             h(Switch, { checked: options.includeConfig, label: "包含配置与数据快照", onChange: (v) => setOptions({ ...options, includeConfig: v }) }),
-            h(Switch, { checked: options.includeLocalEdits, label: "默认打包本机修改（勾选后可逐个改）", onChange: (v) => setOptions({ ...options, includeLocalEdits: v }) }),
             h(ForcedSwitch, { label: "打包前安全检测（强制）", onNag: () => firePackNag("你想干什么") })),
           h(NagText, { text: packNag }),
           h("div", { style: { ...row, rowGap: "6px" } },
@@ -476,7 +489,14 @@ window.__ModuleLoader__.load({
         error ? h(Notice, { tone: "bad" }, error) : null,
         result ? h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "10px" } },
           result.refused || result.error
-            ? h(Notice, { tone: "warn" }, h("b", null, "已停止："), result.error || "未通过检查", result.scan ? null : null)
+            ? h(Notice, { tone: "warn" },
+              h("b", null, "已停止："), result.error || "未通过检查",
+              result.needsAck ? h("div", { style: { ...row, marginTop: "8px" } },
+                h("button", {
+                  style: { ...btn, borderColor: "#ff6b6b", color: "#ff6b6b" },
+                  disabled: busy === "pack",
+                  onClick: () => doPack(true),
+                }, busy === "pack" ? "处理中…" : "我已知晓其中风险，继续打包")) : null)
             : h("div", { style: row },
               h("div", { style: strong }, result.fileName),
               h(Tag, { color: "#2bb673" }, bytes(result.size)),
@@ -494,7 +514,7 @@ window.__ModuleLoader__.load({
             h("button", { style: btnPrimary, disabled: busy !== "", onClick: downloadPack }, busy === "download" ? "准备下载…" : "下载 .dshpack"),
             h("button", { style: btn, disabled: busy !== "", onClick: savePack }, busy === "save" ? "保存中…" : "保存到本机 packs/"),
             result.savedPath ? h("span", { style: hint }, "已存：" + result.savedPath) : null),
-          result.refused || result.error ? null : h("div", { style: hint }, "下载完点「安装 / 导入」页签就能读回来，或把文件发给别人。"))
+          result.refused || result.error ? null : h("div", { style: hint }, "下载后可在「安装 / 导入」页签读回，或将该文件转交他人。"))
           : null)
     }
 
