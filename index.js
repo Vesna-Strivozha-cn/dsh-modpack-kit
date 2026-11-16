@@ -911,6 +911,13 @@ export default {
         options: { ...options, onProgress: (event) => push(event.pct, event.note) },
         context: {
           profileDir: profileDir(),
+          // 优先用宿主自带的插件管理器（pnpm、激活、重启判定都由它负责）；
+          // 服务不在或调用抛错时 installPack 会自动退回 dsh 命令行。
+          installBundle: (() => {
+            const manager = ctx.get('pluginManager')
+            if (!manager || typeof manager.installBundle !== 'function') return undefined
+            return (spec, opts) => manager.installBundle(spec, opts)
+          })(),
           // 联网且市场可用时，优先按市场版本装（能用就返回 name@version，用不了返回 null 走包内）
           resolveMarket: async (plugin) => {
             try {

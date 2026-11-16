@@ -11,7 +11,7 @@ import { scanEntries, scanFile, groupFindings } from '../lib/scan.mjs'
 import { parseYaml, emitYaml, upsertPatchItem } from '../lib/yamlish.mjs'
 import { normalizeManifest } from '../lib/manifest.mjs'
 import { checkCompatibility } from '../lib/compat.mjs'
-import { buildPack, PackRefused } from '../lib/pack.mjs'
+import { buildPack, PackRefused, captureConfigs } from '../lib/pack.mjs'
 import { inspectPackBuffer, installPack } from '../lib/install.mjs'
 import { DEFAULT_CONFIG } from '../lib/store.mjs'
 
@@ -71,6 +71,13 @@ test('zip 拒绝路径逃逸', () => {
   assert(threw, '坏文件应抛错')
 })
 
+test('zip：已经是压缩格式的条目直接存储，不做无用功', () => {
+  const data = Buffer.alloc(8192, 0x30)
+  const text = writeZip([{ name: 'x.txt', data }])
+  const image = writeZip([{ name: 'x.png', data }])
+  assert(image.length > text.length, 'png 应该走存储（更大）而不是再压一遍')
+})
+
 // —— semver ——
 test('semver 范围', () => {
   assertEqual(satisfies('1.2.3', '^1.0.0'), true)
@@ -106,8 +113,7 @@ test('扫描同一行重复命中只记一次', () => {
   assertEqual(hits.length, 1)
 })
 
-test('扫描干净文件', () => {
-  const result = scanEntries([{ name: 'lib/clean.js', data: Buffer.from('export const a = 1\n') }])
+test('扫描干净文件', () => {  const result = scanEntries([{ name: 'lib/clean.js', data: Buffer.from('export const a = 1\n') }])
   assertEqual(result.counts.high, 0)
 })
 
@@ -141,6 +147,21 @@ test('patch yml upsert 保留其它条目', () => {
   assertEqual(parseYaml(inserted.text).map((x) => x.id), ['a', 'b', 'c'])
 })
 
+test('patch yml 空数组与空对象写在同一行（否则不是合法 YAML）', () => {
+  const config = { emptyList: [], emptyMap: {}, nested: { list: [], map: {}, keep: 1 }, rows: [{ tags: [], meta: {} }] }
+  const { text, action } = upsertPatchItem('- id: other\n  name: pkg-other\n', { id: 'a', name: 'pkg-a', config })
+  assertEqual(action, 'inserted')
+  assert(text.includes('emptyList: []'), '空数组应与键写在同一行')
+  assert(text.includes('emptyMap: {}'), '空对象应与键写在同一行')
+  assertEqual(parseYaml(text).find((x) => x.id === 'a').config, config)
+})
+
+test('patch yml flow 映射的带引号键也能读回原名', () => {
+  const text = '- id: a\n  name: pkg-a\n  config: {"endpoint":"https://x.invalid","rules":[{"match":"^/a","weight":2}],"empty":[]}\n'
+  const parsed = parseYaml(text)
+  assertEqual(parsed[0].config, { endpoint: 'https://x.invalid', rules: [{ match: '^/a', weight: 2 }], empty: [] })
+})
+
 // —— manifest ——
 test('清单规范校验', () => {
   let threw = false
@@ -159,6 +180,11 @@ test('清单规范校验', () => {
     normalizeManifest({ schema: 1, kind: 'dsh-modpack', name: 'demo', format: 'full', plugins: [{ name: 'a', version: '1.0.0' }, { name: 'a', version: '2.0.0' }] })
   } catch { dup = true }
   assert(dup, '清单里重复插件应被拒（来源可疑）')
+  let newer = ''
+  try {
+    normalizeManifest({ schema: 2, kind: 'dsh-modpack', name: 'demo', format: 'full', plugins: [{ name: 'a', version: '1.0.0' }] })
+  } catch (error) { newer = String(error.message) }
+  assert(newer.includes('升级'), '更新的格式应提示先升级插件，实际：' + newer)
 })
 
 // —— compat ——
@@ -461,6 +487,50 @@ await testAsync('安装：配置回填不能冲掉其它条目（回归 readPatc
   assert(after.includes('greeting'), '目标插件的配置没写回去：' + after)
 })
 
+await testAsync('安装：数据快照写回 ~/.dsh/<目录>，已有的文件不覆盖', async () => {
+  const { profileDir, installed } = await fixture()
+  const srcHome = process.env.DSH_HOME
+  const srcData = path.join(srcHome, 'demo-plugin')
+  fs.mkdirSync(srcData, { recursive: true })
+  fs.writeFileSync(path.join(srcData, 'notes.md'), '# 笔记\n中文行\n', 'utf8')
+  fs.writeFileSync(path.join(srcData, 'state.json'), '{"seen":3}', 'utf8')
+
+  const built = await buildPack({
+    selection: [{ name: 'demo-plugin', source: 'profile' }],
+    options: { includePayload: true, includeConfig: true, includeLocalEdits: true, name: '数据包' },
+    context: packContext(baseConfig, profileDir, installed),
+  })
+  const inspected = inspectPackBuffer(built.buffer, { config: baseConfig })
+  assert(inspected.manifest.plugins[0].dataIncluded === true, '清单里应标出带了数据快照')
+  assert(inspected.manifest.plugins[0].dataDirs.includes('demo-plugin'), '应记录数据目录真名')
+
+  const targetHome = tmpDir('data-home')
+  process.env.DSH_HOME = targetHome
+  const targetProfile = path.join(targetHome, 'profiles', 'desktop')
+  fs.mkdirSync(targetProfile, { recursive: true })
+  fs.writeFileSync(path.join(targetProfile, 'package.json'), JSON.stringify({
+    name: 'desktop', private: true, dependencies: {}, dsh: { profile: { bundles: [] } },
+  }, null, 2))
+  fs.writeFileSync(path.join(targetProfile, 'cordis.patch.yml'), '- id: keep\n  name: keep-me\n')
+  // 本机已有同名数据文件：默认不动它
+  fs.mkdirSync(path.join(targetHome, 'demo-plugin'), { recursive: true })
+  fs.writeFileSync(path.join(targetHome, 'demo-plugin', 'state.json'), '{"seen":1}', 'utf8')
+
+  const result = await installPack({
+    manifest: inspected.manifest,
+    entries: inspected.entries,
+    config: baseConfig,
+    options: { force: true, applyConfig: false, enableBundles: false },
+    context: { profileDir: targetProfile, runCli: async () => ({ code: 0, output: 'fake cli' }) },
+  })
+  assertEqual(result.ok, true)
+  const notes = path.join(targetHome, 'demo-plugin', 'notes.md')
+  assert(fs.existsSync(notes), '数据快照里的新文件应写回')
+  assert(fs.readFileSync(notes, 'utf8').includes('中文行'), '写回内容要原样')
+  assertEqual(fs.readFileSync(path.join(targetHome, 'demo-plugin', 'state.json'), 'utf8'), '{"seen":1}')
+  assert(result.lines.some((line) => line.includes('未覆盖')), '已有文件未覆盖时要说清楚：' + result.lines.join(' | '))
+})
+
 await testAsync('安装：不启用时 bundle 清单要被撤回原样', async () => {
   const { profileDir, installed } = await fixture()
   const built = await buildPack({
@@ -710,6 +780,111 @@ await testAsync('安装：联网且市场有时优先按市场版本，关掉开
   assert(localCalls[localCalls.length - 1].startsWith('file:'), '应该按包内那份装，实际：' + localCalls[localCalls.length - 1])
   const localAction = localRun.actions.find((a) => a.plugin === 'demo-plugin')
   assertEqual(localAction.source, 'pack')
+})
+
+// —— 优化项：配置擦除、扫描去重、管理器安装 ——
+test('配置快照：疑似凭据在打包前就被擦掉', () => {
+  const patch = [
+    '- id: demo-plugin',
+    '  name: demo-plugin',
+    '  config:',
+    '    apiKey: sk-abcdefghijklmnopqrstuvwxyz',
+    '    endpoint: https://example.com/v1',
+    '    apiKeyEnv: DEMO_KEY',
+    '',
+  ].join('\n')
+  const { captured, notes } = captureConfigs(patch, [{ name: 'demo-plugin' }], (text) => parseYaml(text))
+  const snap = captured.get('demo-plugin')
+  assert(snap, '应抓到这份配置')
+  assertEqual(snap.config.apiKey, '${REDACTED}')
+  assertEqual(snap.config.endpoint, 'https://example.com/v1')
+  assertEqual(snap.config.apiKeyEnv, 'DEMO_KEY', '写环境变量名的字段不该被误伤')
+  assertEqual(snap.configRedacted, ['apiKey'])
+  assert(notes.some((note) => note.includes('REDACTED')), '应说明擦了哪里')
+})
+
+test('扫描：同内容的多份文件各自报一次，不重复扫', () => {
+  const body = Buffer.from('const key = "sk-abcdefghijklmnopqrstuvwxyz"\n')
+  const scan = scanEntries([
+    { name: 'a/lib/x.js', data: body },
+    { name: 'b/lib/x.js', data: body },
+  ])
+  const a = scan.findings.filter((f) => f.file === 'a/lib/x.js')
+  const b = scan.findings.filter((f) => f.file === 'b/lib/x.js')
+  assert(a.length > 0, '第一份要报')
+  assertEqual(b.map((f) => f.rule), a.map((f) => f.rule), '第二份应复用同一批规则命中')
+})
+
+await testAsync('安装：宿主有插件管理器时走服务，不再调命令行', async () => {
+  const targetHome = tmpDir('manager-home')
+  const target = path.join(targetHome, 'profiles', 'desktop')
+  fs.mkdirSync(target, { recursive: true })
+  fs.writeFileSync(path.join(target, 'package.json'), JSON.stringify({
+    name: 'desktop', private: true, dependencies: {}, dsh: { profile: { bundles: [] } },
+  }, null, 2))
+  fs.writeFileSync(path.join(target, 'cordis.patch.yml'), '[]\n')
+  const { profileDir, installed } = await fixture()
+  const built = await buildPack({
+    selection: [{ name: 'demo-plugin', source: 'profile', mode: 'local' }],
+    options: { includePayload: true, includeConfig: false, name: '管理器安装' },
+    context: packContext(baseConfig, profileDir, installed),
+  })
+  const inspected = inspectPackBuffer(built.buffer, { config: baseConfig })
+  const managerCalls = []
+  let cliCalls = 0
+  const run = await installPack({
+    manifest: inspected.manifest,
+    entries: inspected.entries,
+    config: baseConfig,
+    options: { force: true, applyConfig: false, keepLocal: false, enableBundles: true },
+    context: {
+      profileDir: target,
+      installBundle: async (spec, opts) => {
+        managerCalls.push({ spec, opts })
+        return { changed: true, stage: 'install', target: spec, application: 'restart-required' }
+      },
+      runCli: async () => { cliCalls += 1; return { code: 0, output: 'cli' } },
+      resolveMarket: async () => null,
+    },
+  })
+  assertEqual(run.ok, true)
+  assertEqual(managerCalls.length, 1, '应该只调用一次插件管理器')
+  assert(managerCalls[0].spec.startsWith('file:'), '本地插件应交给管理器 file: 路径，实际：' + managerCalls[0].spec)
+  assertEqual(cliCalls, 0, '走管理器时不该再调命令行')
+  assertEqual(run.needsRestart, true, '管理器说要重启，结果也要说要重启')
+})
+
+await testAsync('安装：插件管理器报错时自动退回命令行', async () => {
+  const targetHome = tmpDir('manager-fallback')
+  const target = path.join(targetHome, 'profiles', 'desktop')
+  fs.mkdirSync(target, { recursive: true })
+  fs.writeFileSync(path.join(target, 'package.json'), JSON.stringify({
+    name: 'desktop', private: true, dependencies: {}, dsh: { profile: { bundles: [] } },
+  }, null, 2))
+  fs.writeFileSync(path.join(target, 'cordis.patch.yml'), '[]\n')
+  const { profileDir, installed } = await fixture()
+  const built = await buildPack({
+    selection: [{ name: 'demo-plugin', source: 'profile', mode: 'local' }],
+    options: { includePayload: true, includeConfig: false, name: '管理器退回' },
+    context: packContext(baseConfig, profileDir, installed),
+  })
+  const inspected = inspectPackBuffer(built.buffer, { config: baseConfig })
+  let cliCalls = 0
+  const run = await installPack({
+    manifest: inspected.manifest,
+    entries: inspected.entries,
+    config: baseConfig,
+    options: { force: true, applyConfig: false, keepLocal: false, enableBundles: false },
+    context: {
+      profileDir: target,
+      installBundle: async () => { throw new Error('pnpm 起不来') },
+      runCli: async () => { cliCalls += 1; return { code: 0, output: 'cli ok' } },
+      resolveMarket: async () => null,
+    },
+  })
+  assertEqual(run.ok, true)
+  assertEqual(cliCalls, 1, '管理器失败后应该用命令行补一次')
+  assert(run.lines.some((line) => line.includes('改用命令行重试')), '应留下退回说明')
 })
 
 for (const [state, name, detail] of results) {

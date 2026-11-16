@@ -84,7 +84,7 @@ if (!fs.existsSync(profileDir)) {
 function resolveCli() {
   const explicit = val('--dsh') || process.env.DSH_CLI || ''
   if (explicit) {
-    if (/\.js$/iu.test(explicit)) {
+    if (/\.(?:mjs|cjs|js)$/iu.test(explicit)) {
       return { exe: process.execPath, args: ['--expose-internals', path.resolve(explicit)], env: { ELECTRON_RUN_AS_NODE: '1' }, label: explicit }
     }
     return { exe: explicit, args: [], env: {}, label: explicit }
@@ -233,7 +233,10 @@ function restoreConfigs() {
     let text = fs.existsSync(patchFile) ? fs.readFileSync(patchFile, 'utf8') : ''
     const trimmed = text.trim()
     if (trimmed === '' || trimmed === '[]') text = ''
-    if (new RegExp('(^|\\n)\\s*-\\s*id:\\s*' + id.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')).test(text)) continue
+    if (new RegExp('(^|\\n)\\s*-\\s*id:\\s*' + id.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')).test(text)) {
+      say('  配置条目已存在，保持本机原样：' + id)
+      continue
+    }
     const block = ['- id: ' + id, '  name: ' + String(snap.name || id)]
     if (snap.disabled) block.push('  disabled: true')
     if (snap.config && typeof snap.config === 'object') block.push('  config: ' + JSON.stringify(snap.config))
@@ -285,7 +288,39 @@ for (const r of results) say((r.ok ? '  ok   ' : '  FAIL ') + r.plugin.name + ' 
 if (manifest.options && manifest.options.includeConfig) {
   const restored = restoreConfigs()
   if (restored.length > 0) say('配置已回填：' + restored.join(', '))
+  const data = restoreData()
+  if (data.written.length > 0) say('数据快照已写回 ' + data.written.length + ' 个文件：' + data.written.slice(0, 6).join('、') + (data.written.length > 6 ? ' 等' : ''))
+  if (data.kept.length > 0) say('有 ' + data.kept.length + ' 个数据文件本机已有，未覆盖（要覆盖就加 --replace 重跑）')
 }
+/** 数据快照：把包里 data/<目录>/ 下的文本文件放回 ~/.dsh/<目录>/，默认不覆盖本机已有文件。 */
+function restoreData() {
+  const dir = path.join(root, 'data')
+  if (!fs.existsSync(dir)) return { written: [], kept: [] }
+  const written = []
+  const kept = []
+  const walk = (current, relBase) => {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) continue
+      const abs = path.join(current, entry.name)
+      const rel = path.join(relBase, entry.name)
+      if (entry.isDirectory()) { walk(abs, rel); continue }
+      if (!entry.isFile()) continue
+      const [base, ...rest] = rel.split(/[\\/]/u)
+      if (!rest.length) continue
+      const baseDir = path.resolve(home, base)
+      const target = path.resolve(baseDir, rest.join(path.sep))
+      if (!target.startsWith(baseDir + path.sep)) continue
+      if (dryRun) { written.push('（演练）' + rel); continue }
+      if (fs.existsSync(target) && !replaceExisting) { kept.push(rel); continue }
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      fs.copyFileSync(abs, target)
+      written.push(rel)
+    }
+  }
+  walk(dir, '')
+  return { written, kept }
+}
+
 if (noBundles) {
   const removed = stripBundles()
   say(removed > 0 ? '按 --no-bundles 撤回了 ' + removed + ' 条 bundle 登记（装了但不加载）。' : '没有需要撤回的 bundle 登记。')

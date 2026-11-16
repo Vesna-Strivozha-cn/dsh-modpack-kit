@@ -1351,6 +1351,33 @@ window.__ModuleLoader__.load({
     }
 
     // —— 设置与记录 ——
+    const REPO_URL = "https://github.com/Vesna-Strivozha-cn/dsh-modpack-kit"
+
+    // 页脚：仓库地址 + 求星。放在页面与设置最底下，不抢功能的位置。
+    function RepoFooter(props) {
+      return h("div", {
+        style: {
+          marginTop: "6px",
+          paddingTop: "12px",
+          borderTop: "1px solid var(--dsw-alias-border-l2)",
+          display: "flex",
+          alignItems: "baseline",
+          gap: "8px",
+          flexWrap: "wrap",
+          fontSize: "12px",
+          color: "var(--dsw-alias-label-tertiary)",
+        },
+      },
+        h("span", null, "项目地址："),
+        h("a", {
+          href: REPO_URL,
+          target: "_blank",
+          rel: "noreferrer",
+          style: { color: "var(--dsw-alias-label-primary)", textDecoration: "underline", textUnderlineOffset: "2px" },
+        }, "github.com/Vesna-Strivozha-cn/dsh-modpack-kit"),
+        h("span", null, "如果这个插件省了时间，顺手点个 Star，能让更多人找到它。"))
+    }
+
     function SettingsPanel(props) {
       const [cfg, setCfg] = useState(props.status ? props.status.config : null)
       const [saved, setSaved] = useState("")
@@ -1457,7 +1484,8 @@ window.__ModuleLoader__.load({
             h("span", { style: label }, "自动更新（小时）"),
             h("input", { style: { ...input, width: "78px" }, type: "number", min: "1", max: "168", value: cfg.catalogRefreshHours || 24, onChange: (e) => setField("catalogRefreshHours", Number(e.target.value)) }),
             h("button", { style: btn, disabled: busy, onClick: () => patch({ catalogPageSize: cfg.catalogPageSize, catalogRefreshHours: cfg.catalogRefreshHours }) }, "保存目录设置")),
-          h("div", { style: hint }, "目录就是插件市场自己发布的那份 dsh-plugin-catalog：CDN 优先，失败退回 npm 包。分类与词条都照它来，本插件不另造一套。"))
+          h("div", { style: hint }, "目录就是插件市场自己发布的那份 dsh-plugin-catalog：CDN 优先，失败退回 npm 包。分类与词条都照它来，本插件不另造一套。"),
+          h(RepoFooter, null))
       )
     }
 
@@ -1509,7 +1537,8 @@ window.__ModuleLoader__.load({
           tab === "pack" ? h(PackPanel, { status, jobs, result: packResult, setResult: savePackResult, focus }) : null,
           tab === "install" ? h(InstallPanel, { status }) : null,
           tab === "settings" ? h(SettingsPanel, { status }) : null,
-          h("div", { style: hint }, "说明：整合包只打包你选择的插件与必要配置。打包与安装安全检测在内存中进行，命中原文不落盘；请遵守插件作者许可证与你所在地区的法律法规。")),
+          h("div", { style: hint }, "说明：整合包只打包你选择的插件与必要配置。打包与安装安全检测在内存中进行，命中原文不落盘；请遵守插件作者许可证与你所在地区的法律法规。"),
+          h(RepoFooter, null)),
         h(JobDock, { jobs, onOpenResult: openResult })
       )
     }
