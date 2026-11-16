@@ -19,10 +19,10 @@
 dsh plugin --profile desktop add dsh-modpack-kit
 ```
 
-或本地开发目录（本项目就在 `D:\桌面\蛆\整合包`）：
+也可以从 GitHub 直接装（不经过 npm）：
 
 ```bash
-dsh plugin --profile desktop add "file:D:/桌面/蛆/整合包"
+dsh plugin --profile desktop add github:Vesna-Strivozha-cn/dsh-modpack-kit
 ```
 
 装完重启 DSH，左侧栏出现「整合包」。
