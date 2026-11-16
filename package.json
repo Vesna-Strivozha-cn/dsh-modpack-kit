@@ -1,6 +1,6 @@
 {
   "name": "dsh-modpack-kit",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Provides HMCL/PCL-launcher-style modpack packaging and installation for DeepSeek Harness: bundle several plugins with their configuration and data into one .dshpack and install it in a single pass. Two forms: a self-contained full pack that a machine with only DSH installed can install, and a lite pack that records names and versions and fetches them on install. Each plugin can be packed from its upstream release with default configuration or from a local copy (code, config entries, data snapshot); configuration is re-applied by entry, data is restored under ~/.dsh without overwriting existing files, and suspected credentials become ${REDACTED}. Categories, search, paging and entries come from the plugin-market catalog, and market versions are preferred when online. Packing always runs an in-memory scan for secrets and risky code (masked, never written to disk); high-risk hits pause the job until confirmed, then it resumes from the checkpoint without rescanning. Installation re-checks sha256 integrity, compatibility and licences, and can finish without enabling or enable right away. The UI can live in settings, the sidebar or the plugins tab, each switchable. Installing the plugin market (dshmarket) first is recommended, not required.",
   "type": "module",
   "main": "index.js",
