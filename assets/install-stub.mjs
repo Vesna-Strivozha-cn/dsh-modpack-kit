@@ -5,13 +5,14 @@
  * 不依赖任何插件：只要本机有 DSH 与 Node 20+，解压后即可安装。
  *
  * 用法：
- *   node install/install.mjs [--profile desktop] [--dry-run] [--no-bundles] [--force]
+ *   node install/install.mjs [--profile desktop] [--dry-run] [--no-bundles] [--replace] [--force]
  *                            [--dsh "<DSH 可执行文件或 cli.js>"]
  *
  * 参数：
  *   --profile <名字>  目标 profile，默认 desktop（也读 DSH_PROFILE）
  *   --dry-run         只打印要执行的命令，不改任何文件
  *   --no-bundles      装文件但不登记到 dsh.profile.bundles（重启也不加载）
+ *   --replace         本机已装的也换成包内版本（默认跳过已装的）
  *   --force           兼容性检查发现问题也继续（不推荐）
  *   --dsh <path>      指定 DSH：可执行文件，或 app.asar 里那份 cli.js
  *
@@ -56,8 +57,18 @@ const profileDir = path.join(home, 'profiles', profile)
 const dryRun = has('--dry-run')
 const noBundles = has('--no-bundles')
 const force = has('--force')
+// 默认跳过本机已装的（同名或同插件不同版本都算已有）；--replace 才覆盖
+const replaceExisting = has('--replace') || has('--force-existing')
 
 say('DSH 整合包：' + (manifest.name || '(未命名)') + ' · ' + (manifest.format === 'full' ? '完整版' : '轻量版'))
+if (manifest.author) say('打包者：' + manifest.author)
+if (manifest.createdAt) say('打包时间：' + new Date(manifest.createdAt).toLocaleString())
+const pluginCount = Array.isArray(manifest.plugins) ? manifest.plugins.length : 0
+say('包含插件：' + pluginCount + ' 个' + (pluginCount ? '（' + manifest.plugins.map((item) => item.name + (item.version ? '@' + item.version : '')).join('、') + '）' : ''))
+if (manifest.description) {
+  say('说明：')
+  for (const line of String(manifest.description).split(/\r?\n/u)) say('  ' + line)
+}
 say('目标 profile：' + profile + '  目录：' + profileDir)
 if (process.env.DSH_HOME && path.resolve(process.env.DSH_HOME) !== path.resolve(home)) {
   say('提示：环境变量 DSH_HOME 已设成 ' + process.env.DSH_HOME + '，但 DSH 的命令行只认 ' + home + '；本安装器按实际生效的位置安装。')
@@ -143,7 +154,28 @@ const vendor = vendorRoot()
 if (manifest.format === 'full' && !dryRun) say('插件会先复制到：' + vendor)
 
 const results = []
+const skipped = []
+// 本机已装的插件名：同名或同插件不同版本都算「已有」，默认不覆盖
+function readDependencies() {
+  const pkgFile = path.join(profileDir, 'package.json')
+  if (!fs.existsSync(pkgFile)) return {}
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgFile, 'utf8'))
+    return pkg && typeof pkg.dependencies === 'object' && pkg.dependencies ? pkg.dependencies : {}
+  } catch {
+    return {}
+  }
+}
+const installedBefore = readDependencies()
+
 for (const plugin of manifest.plugins || []) {
+  const already = installedBefore[plugin.name]
+  if (already && !replaceExisting) {
+    // 需求：先跳过已装的，其余照装；装完再告诉用户怎么换
+    skipped.push({ name: plugin.name, localVersion: String(already), packVersion: plugin.version || '' })
+    results.push({ plugin, ok: true, skipped: true, message: '本机已装 ' + already + '，跳过（要换成包内版本，加 --replace 重跑）' })
+    say('跳过 ' + plugin.name + '：本机已装 ' + already)
+  } else {
   const dirName = plugin.dirName || plugin.name
   let spec
   if (manifest.format === 'full') {
@@ -180,6 +212,7 @@ for (const plugin of manifest.plugins || []) {
   const ok = res.status === 0
   results.push({ plugin, ok, message: ok ? '已安装（' + Math.round((Date.now() - started) / 100) / 10 + ' 秒）' : '失败：' + output.trim().split(/\r?\n/u).slice(-3).join(' | ') })
   say('  ' + (ok ? '完成' : '失败'))
+  }
 }
 
 /** 把 configs/<插件>.json 合并回 cordis.patch.yml（只在目标条目不存在时追加）。 */
@@ -239,6 +272,13 @@ function stripBundles() {
 }
 
 say('')
+if (skipped.length > 0) {
+  say('以下 ' + skipped.length + ' 个插件本机已经装了，安装器按规则先跳过、没动它们：')
+  for (const item of skipped) say('  - ' + item.name + '：本机 ' + item.localVersion + ' → 包内 ' + (item.packVersion || '未知'))
+  say('如果要换成包内版本，重跑并加 --replace：node install/install.mjs --profile ' + profile + ' --replace')
+  say('（保留本机版本就不用管，其余插件已经装好了。）')
+  say('')
+}
 const failed = results.filter((r) => !r.ok)
 for (const r of results) say((r.ok ? '  ok   ' : '  FAIL ') + r.plugin.name + ' :: ' + r.message)
 

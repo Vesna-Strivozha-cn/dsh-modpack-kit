@@ -76,6 +76,42 @@ window.__ModuleLoader__.load({
       return () => packStore.subs.delete(fn)
     }
 
+    // 已导入的整合包：可以同时留好几份，各自显示名字 / 作者 / 描述，切页签也还在
+    const importStore = { value: [], subs: new Set() }
+    function readImports() {
+      return importStore.value.slice()
+    }
+    function setImports(next) {
+      importStore.value = Array.isArray(next) ? next.slice(0, 8) : []
+      for (const fn of [...importStore.subs]) { try { fn(readImports()) } catch (e) { /* 订阅出错不影响别的 */ } }
+    }
+    function subscribeImports(fn) {
+      importStore.subs.add(fn)
+      return () => importStore.subs.delete(fn)
+    }
+    function importEntry(data, fileName) {
+      const manifest = (data && data.manifest) || {}
+      return {
+        token: data.token,
+        fileName: fileName || "",
+        name: manifest.name || "(未命名整合包)",
+        description: manifest.description || "",
+        author: manifest.author || "",
+        format: manifest.format || "",
+        createdAt: manifest.createdAt || "",
+        plugins: Array.isArray(manifest.plugins) ? manifest.plugins.length : 0,
+        importedAt: new Date().toISOString(),
+      }
+    }
+    function addImport(entry) {
+      if (!entry || !entry.token) return
+      const rest = importStore.value.filter((item) => item.token !== entry.token)
+      setImports([entry, ...rest])
+    }
+    function removeImport(token) {
+      setImports(importStore.value.filter((item) => item.token !== token))
+    }
+
     // 点了「清空进程」：打包页上的旧报错、旧的失败结果也一起收掉，别留着当幽灵
     const clearSignal = { subs: new Set() }
     function fireClear() {
@@ -110,6 +146,51 @@ window.__ModuleLoader__.load({
         error.data = data
         throw error
       }
+      return data
+    }
+
+    // 宿主有没有原生的目录选择器：有就能点「浏览文件夹…」，没有就退回手填
+    let pickDirectoryHost = null
+
+    const arrayBufferToBase64 = (buffer) => {
+      const view = new Uint8Array(buffer)
+      const chunk = 0x8000
+      let text = ""
+      for (let i = 0; i < view.length; i += chunk) {
+        text += String.fromCharCode.apply(null, view.subarray(i, i + chunk))
+      }
+      return btoa(text)
+    }
+
+    // 把 .dshpack 交给宿主读：先按原始字节 POST，环境不允许时退回 base64 JSON
+    async function uploadPackFile(file) {
+      if (!file) throw new Error("没有拿到文件")
+      if (file.size && file.size > 250 * 1024 * 1024) throw new Error("文件太大（超过 250 MB）")
+      let firstError = ""
+      try {
+        const res = await fetch(API + "/pack/drop", {
+          method: "POST",
+          headers: { "Content-Type": "application/octet-stream" },
+          body: file,
+        })
+        const text = await res.text()
+        let data = null
+        try { data = JSON.parse(text) } catch {}
+        if (res.ok && data && data.ok) return data
+        firstError = (data && data.error) || ("HTTP " + res.status + (text ? "：" + text.slice(0, 120) : ""))
+      } catch (e) {
+        firstError = (e && e.message) || String(e)
+      }
+      // 退回 base64：有些环境不许 POST 二进制，JSON 一定通
+      let buffer
+      try { buffer = await file.arrayBuffer() } catch (e) { throw new Error("读文件失败：" + ((e && e.message) || e)) }
+      let data
+      try {
+        data = await api("/pack/drop", { name: file.name || "dropped.dshpack", data: arrayBufferToBase64(buffer) })
+      } catch (e) {
+        throw new Error(((e && e.message) || String(e)) + "（原始字节也没通：" + firstError + "）")
+      }
+      if (!data || !data.ok) throw new Error((data && data.error) || ("读取失败：" + firstError))
       return data
     }
 
@@ -278,7 +359,13 @@ window.__ModuleLoader__.load({
     }
 
     function JobDock(props) {
-      const jobs = Array.isArray(props.jobs) ? props.jobs : []
+      const given = Array.isArray(props.jobs) ? props.jobs : []
+      // 「清空进程」之后，就算服务端还残留一条，也在界面上立刻拿掉
+      const [cleared, setCleared] = useState([])
+      const jobs = given.filter((job) => !cleared.includes(job.id))
+      useEffect(() => {
+        setCleared((prev) => (prev.length === 0 ? prev : prev.filter((id) => given.some((job) => job.id === id))))
+      }, [given])
       const [pos, setPos] = useState(readDockPos())
       const [pinned, setPinned] = useState(false)     // 手动唤出：没有任务时也显示
       const [hidden, setHidden] = useState(false)     // 手动收起：连进行中的也先藏起来
@@ -296,6 +383,9 @@ window.__ModuleLoader__.load({
 
       const startDrag = (event) => {
         if (!event || typeof event.clientX !== "number") return
+        // 按在按钮上就别当拖动：否则指针捕获会把 click 抢走，按钮点不到，
+        // 而且抬手时还会顺带把窗口展开/收起（就是「判定重叠」那个毛病）
+        if (event.target && typeof event.target.closest === "function" && event.target.closest("button")) return
         const el = boxRef.current
         const rect = el && el.getBoundingClientRect ? el.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 }
         dragRef.current = {
@@ -371,25 +461,33 @@ window.__ModuleLoader__.load({
         try { await api("/jobs/ack", { id }) } catch (error) { setDockMsg((error && error.message) || "确认失败") }
       }
       const dismiss = async (id) => {
-        try { await api("/jobs/dismiss", { id }) } catch (error) { setDockMsg((error && error.message) || "删除失败") }
+        try {
+          await api("/jobs/dismiss", { id })
+          // 删掉一条也算收尾：安装页那条「完成 · 100%」的结论一起收掉
+          setCleared((prev) => (prev.includes(id) ? prev : [...prev, id]))
+          fireClear()
+        } catch (error) { setDockMsg((error && error.message) || "删除失败") }
       }
       const clearDone = async () => {
-        // 先试一次服务端的批量清空；老宿主上没有这个路由时，退回逐个删
-        try {
-          const data = await api("/jobs/clear", {})
-          setDockMsg(data && data.removed && data.removed.length ? "" : "没有可清空的进程")
-          fireClear()
+        // 只看「收尾」的：正在跑的和停在风险点等你决定的，一律留着、照常显示
+        const targets = given.filter((job) => job.status !== "running" && job.status !== "paused")
+        if (targets.length === 0) {
+          setDockMsg("没有可清空的进程（正在跑的和停在风险点的会留着）")
           return
-        } catch (error) {
-          const targets = jobs.filter((job) => job.status !== "running" && job.status !== "paused")
-          if (targets.length === 0) { setDockMsg((error && error.message) || "清空进程失败"); return }
-          let bad = 0
-          for (const job of targets) {
-            try { await api("/jobs/dismiss", { id: job.id }) } catch { bad += 1 }
-          }
-          fireClear()
-          setDockMsg(bad ? ("有 " + bad + " 条没删掉（可能还在跑），其余已清") : "")
         }
+        // 先摘行：服务端慢一点也能立刻看到效果，不用等下一轮轮询
+        setCleared((prev) => [...new Set([...prev, ...targets.map((job) => job.id)])])
+        fireClear()
+        setDockMsg("已清 " + targets.length + " 条")
+        try {
+          await api("/jobs/clear", {})
+          return
+        } catch (ignored) { /* 老宿主没有这条路由：退回逐条删 */ }
+        let bad = 0
+        for (const job of targets) {
+          try { await api("/jobs/dismiss", { id: job.id }) } catch (error) { bad += 1 }
+        }
+        if (bad) setDockMsg("有 " + bad + " 条没删掉（可能还在跑），其余已清")
       }
       // 只要有一条不是「在跑」或「停在风险点」，就给清空入口（状态再怪也算收尾）
       const finished = jobs.filter((job) => job.status !== "running" && job.status !== "paused")
@@ -425,16 +523,20 @@ window.__ModuleLoader__.load({
           h("span", { style: { fontSize: "12px", color: "var(--dsw-alias-label-secondary, #b6bac3)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, headText),
           h("span", { style: { marginLeft: "auto", fontSize: "12px", fontVariantNumeric: "tabular-nums" } }, headPct + "%"),
           running.length > 1 ? h("span", { style: { ...hint, marginLeft: "0" } }, "+" + (running.length - 1)) : null,
-          finished.length
+          jobs.length > 0
             ? h("button", {
-              style: { ...chipBtn, marginLeft: "2px", padding: "0 6px", lineHeight: "18px" },
+              type: "button",
+              style: { ...chipBtn, marginLeft: "2px", padding: "2px 8px", lineHeight: "18px", flexShrink: 0 },
               title: "清掉所有收尾与失败的进程（跑着的和停在风险点的留着）",
+              onPointerDown: (event) => { if (event && event.stopPropagation) event.stopPropagation() },
               onClick: (event) => { if (event && event.stopPropagation) event.stopPropagation(); clearDone() },
             }, "清空进程")
             : null,
           h("button", {
-            style: { ...chipBtn, marginLeft: "2px", padding: "0 6px", lineHeight: "18px" },
+            type: "button",
+            style: { ...chipBtn, marginLeft: "2px", padding: "2px 8px", lineHeight: "18px", flexShrink: 0 },
             title: "收起（有任务时还会再冒出来）",
+            onPointerDown: (event) => { if (event && event.stopPropagation) event.stopPropagation() },
             onClick: (event) => { if (event && event.stopPropagation) event.stopPropagation(); setHidden(true); setPinned(false) },
           }, "收起")),
         current ? h(ProgressBar, { pct: headPct, tone: current.status === "failed" ? "#ff6b6b" : current.status === "cancelled" ? "#8b8f99" : undefined }) : null,
@@ -469,7 +571,7 @@ window.__ModuleLoader__.load({
                   job.canAck
                     ? h("button", { style: { ...chipBtn, color: "#ff6b6b", borderColor: "#ff6b6b" }, title: "忽略风险，在同一个任务里接着跑完", onClick: () => ack(job.id) }, "我知道在干什么")
                     : null,
-                  job.canDismiss
+                  job.status !== "running" && job.status !== "paused"
                     ? h("button", { style: { ...chipBtn, color: "var(--dsw-alias-label-tertiary, #8b8f99)" }, title: "从列表里删掉这条记录", onClick: () => dismiss(job.id) }, "删除该进程")
                     : null,
                   job.error && job.status !== "paused" ? h("span", { style: { ...hint, color: "#ff6b6b" } }, job.error) : null)))))
@@ -627,13 +729,15 @@ window.__ModuleLoader__.load({
       }
 
       const picked = Object.keys(selected)
+      // 市场里没装的插件也能打包：走 npm 源（安装时由市场按版本取包）
+      const entrySource = (entry) => (entry.installed === false ? "npm" : "profile")
       const toggle = (entry) => {
         setSelected((prev) => {
           const next = { ...prev }
           if (next[entry.name]) delete next[entry.name]
           else next[entry.name] = {
             name: entry.name,
-            source: entry.source,
+            source: entrySource(entry),
             spec: entry.version || "",
             mode: "base",
           }
@@ -843,12 +947,12 @@ window.__ModuleLoader__.load({
                 h("div", { style: { flex: "1 1 220px", minWidth: "180px" } },
                   h("div", { style: label }, entry.title || entry.name, " ", h("span", { style: hint }, "@" + (entry.version || "?"))),
                   h("div", { style: hint }, (entry.description || "").slice(0, 110))),
-                h("span", { style: chip }, entry.installed === false ? "市场" : "本机"),
+                h("span", { style: chip }, entry.installed === false ? "市场 · 未装" : "本机"),
                 h("span", { style: { ...chip, color: "var(--dsw-alias-label-tertiary)" } }, labelOf(categoryOf(entry))),
                 entry.updateAvailable ? h(Tag, { color: "#2bb673" }, "市场版 " + (entry.marketVersion || entry.version) + " 更新") : null,
                 on ? h("input", {
                   style: { ...input, width: "120px" },
-                  placeholder: selected[entry.name].source === "npm" ? "版本，空=最新" : "版本，空=原版",
+                  placeholder: selected[entry.name].source === "npm" ? "版本，空=最新（从市场取包）" : "版本，空=本机版本",
                   value: selected[entry.name].spec || "",
                   onChange: (e) => setSpec(entry.name, e.target.value),
                 }) : null,
@@ -865,7 +969,7 @@ window.__ModuleLoader__.load({
             h("button", { style: btn, disabled: searching, onClick: loadMore }, searching ? "加载中…" : ("加载更多（还有 " + Math.max(0, search.total - rows.length) + " 条）"))) : null,
           h("div", { style: hint }, active
             ? "排序：已装的排前面，其余按插件市场的相关度与目录顺序。分类和词条都来自插件市场目录。"
-            : "首屏只列本机已装。搜索或点分类才会去插件市场目录里查，服务端分页、一次一页。")
+            : "首屏只列本机已装。搜索或点分类才会去插件市场目录里查，服务端分页、一次一页。搜索结果里没装的插件也能直接勾选——打包时按版本从插件市场取包，装的时候同样从市场下载。")
         ),
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
           h("div", { style: strong }, "包选项"),
@@ -920,22 +1024,100 @@ window.__ModuleLoader__.load({
     function InstallPanel(props) {
       const [source, setSource] = useState({ kind: "url", url: "", file: "" })
       const [packs, setPacks] = useState([])
+      const [dirInput, setDirInput] = useState((props.status && props.status.paths && props.status.paths.packs) || "")
+      const [dirInfo, setDirInfo] = useState({ dir: (props.status && props.status.paths && props.status.paths.packs) || "", error: "" })
       const [preview, setPreview] = useState(null)
       const [busy, setBusy] = useState("")
       const [error, setError] = useState("")
       const [done, setDone] = useState(null)
-      const [options, setOptions] = useState({ keepLocal: true, applyConfig: true, force: false, dryRun: false, enableBundles: !!((props.status && props.status.config && props.status.config.enableOnInstall) === true) })
+      const [options, setOptions] = useState({ keepLocal: true, applyConfig: true, force: false, dryRun: false, preferMarket: !!((props.status && props.status.config && props.status.config.preferMarketOnInstall !== false)), enableBundles: !!((props.status && props.status.config && props.status.config.enableOnInstall) === true) })
+      // 安装也走任务队列：进度直接显示在左下角那个窗里，这里留一份给页面内看
+      const [progress, setProgress] = useState(null)
+      const [deferred, setDeferred] = useState([])
+      const [askReplace, setAskReplace] = useState(false)
+      const [imports, setImportsState] = useState(readImports())
 
-      const reloadPacks = useCallback(async () => {
+      // 已导入的几份包各自留在列表里：切页签、开关进度窗都不丢
+      useEffect(() => subscribeImports((next) => setImportsState(next)), [])
+
+      // 进度窗里点了「清空进程」：安装页上那条「完成 / 失败」的结论也一起收掉，别留着当幽灵
+      useEffect(() => subscribeClear(() => {
+        setProgress(null)
+        setDone(null)
+        setDeferred([])
+        setAskReplace(false)
+        setError("")
+      }), [])
+
+      const fileRef = useRef(null)
+
+      // 用「打开文件」的方式挑一个 .dshpack：字节直接读，不要求你写路径
+      const pickFile = async (file) => {
+        if (!file) return
+        if (!/\.dshpack$/i.test(file.name || "")) { setError("只认 .dshpack 整合包"); return }
+        setBusy("upload"); setError(""); setDone(null); setDeferred([]); setAskReplace(false)
         try {
-          const data = await api("/packs")
-          if (data && data.ok) setPacks(data.items || [])
-        } catch { /* 列目录失败不打扰用户，真要装可以用链接 */ }
+          const data = await uploadPackFile(file)
+          setSource({ kind: "token", token: data.token, url: "", file: "" })
+          setPreview(data)
+          addImport(importEntry(data, file.name))
+        } catch (e) {
+          setError((e && e.message) || String(e))
+        } finally { setBusy("") }
+      }
+
+      // 从「已导入的整合包」里挑一份：重新读一遍拿预览（token 过期就提示并去掉这条）
+      const pickImport = async (item) => {
+        if (!item || !item.token) return
+        setBusy("import"); setError(""); setDone(null); setDeferred([]); setAskReplace(false)
+        try {
+          const data = await api("/inspect", { token: item.token })
+          if (!data || data.ok !== true) throw new Error((data && data.error) || "这份导入的包已经过期了，重新导入一次")
+          setSource({ kind: "token", token: item.token, url: "", file: "" })
+          setPreview(data)
+        } catch (e) {
+          const message = (e && e.message) || String(e)
+          setError(message)
+          if (/过期|找不到|expired/iu.test(message)) removeImport(item.token)
+        } finally { setBusy("") }
+      }
+
+      // 原生目录选择器：拿到绝对路径就填进去并列出该目录的 .dshpack
+      const browseFolder = async () => {
+        if (typeof pickDirectoryHost !== "function") {
+          setDirInfo({ ...dirInfo, error: "这个环境没有系统目录选择器，直接在上面填路径也能用" })
+          return
+        }
+        setBusy("dir")
+        try {
+          const picked = await pickDirectoryHost()
+          if (picked) {
+            setDirInput(picked)
+            await reloadPacks(picked)
+          }
+        } catch (e) {
+          setDirInfo({ ...dirInfo, error: "打不开目录选择器：" + ((e && e.message) || e) })
+        } finally { setBusy("") }
+      }
+
+      // 列目录：不传目录就看插件自己的 packs，传了就看你指定的目录
+      const reloadPacks = useCallback(async (dir) => {
+        const want = typeof dir === "string" ? dir.trim() : ""
+        try {
+          const data = want ? await api("/packs", { dir: want }) : await api("/packs")
+          if (data && data.items) setPacks(data.items)
+          setDirInfo({ dir: (data && data.dir) || want, error: (data && data.error) || "" })
+        } catch (e) {
+          setDirInfo({ dir: want, error: (e && e.message) || String(e) })
+        }
       }, [])
       useEffect(() => { reloadPacks() }, [reloadPacks])
 
+      // 拖进来的包：外面读好了，这里接住直接当预览
+
       const bodyFor = () => {
         if (source.kind === "url") return { url: source.url.trim() }
+        if (source.kind === "token") return { token: source.token }
         return { file: source.file }
       }
 
@@ -950,18 +1132,73 @@ window.__ModuleLoader__.load({
         } finally { setBusy("") }
       }
 
+      // 等一个任务跑完（安装同样在后台跑，进度窗里能看到）
+      const waitJob = async (jobId) => {
+        const started = Date.now()
+        while (Date.now() - started < 15 * 60 * 1000) {
+          const data = await api("/jobs")
+          const job = data && data.jobs ? data.jobs.find((item) => item.id === jobId) : null
+          if (!job) throw new Error("任务不见了（可能已过期），再试一次")
+          setProgress({ pct: job.pct, note: job.note, status: job.status })
+          if (job.status !== "running") return job
+          await new Promise((resolve) => setTimeout(resolve, 700))
+        }
+        throw new Error("等了 15 分钟还没结束，去左下角看看是不是卡住了")
+      }
+
       const install = async () => {
-        setBusy("install"); setError(""); setDone(null)
+        setBusy("install"); setError(""); setDone(null); setDeferred([]); setAskReplace(false); setProgress(null)
         try {
-          const data = await api("/install", { ...bodyFor(), ...options })
-          if (!data.ok) {
-            setDone({ ok: false, error: data.error, refused: data.refused, scan: data.scan, report: data.report })
+          const data = await api("/install", { ...bodyFor(), ...options, async: true })
+          if (!data || data.ok !== true || !data.job) {
+            // 老宿主不认 async：退回同步调用
+            const plain = await api("/install", { ...bodyFor(), ...options })
+            if (!plain.ok) {
+              setDone({ ok: false, error: plain.error, refused: plain.refused, scan: plain.scan, report: plain.report })
+              return
+            }
+            setDone(plain)
+            setDeferred(Array.isArray(plain.deferred) ? plain.deferred : [])
+            setAskReplace(Array.isArray(plain.deferred) && plain.deferred.length > 0)
             return
           }
-          setDone(data)
+          const job = await waitJob(data.job.id)
+          const payload = job.data || {}
+          // 结果已经拿到页面上了，这条任务就从进度窗里摘掉：不用你再去点一次清空
+          try { await api("/jobs/dismiss", { id: job.id }) } catch (ignored) { /* 老宿主没有这条路由就留着 */ }
+          if (job.status === "cancelled") { setDone({ ok: false, error: "已取消（没有改动 profile）" }); return }
+          if (!payload.ok) {
+            setDone({ ok: false, error: payload.error || job.error || "安装失败", refused: Boolean(payload.refused), scan: payload.scan, report: payload.report })
+            return
+          }
+          setDone(payload)
+          setDeferred(Array.isArray(payload.deferred) ? payload.deferred : [])
+          setAskReplace(Array.isArray(payload.deferred) && payload.deferred.length > 0)
         } catch (e) {
           setDone({ ok: false, error: e.message || String(e), scan: (e.data && e.data.scan) || null, report: (e.data && e.data.report) || "", refused: Boolean(e.data && e.data.refused) })
-        } finally { setBusy("") }
+        } finally { setBusy(""); setProgress(null) }
+      }
+
+      // 把刚才跳过的换成包内版本
+      const replaceDeferred = async (names) => {
+        if (!done || !done.token) { setError("这次安装的上下文过期了，重新读一遍包"); return }
+        setBusy("replace"); setError("")
+        try {
+          const data = await api("/install/replace", { token: done.token, names, async: true })
+          if (!data || data.ok !== true || !data.job) {
+            const plain = await api("/install/replace", { token: done.token, names })
+            if (!plain.ok) { setError(plain.error || "替换失败"); return }
+            setDone(plain); setDeferred(Array.isArray(plain.deferred) ? plain.deferred : []); setAskReplace(false)
+            return
+          }
+          const job = await waitJob(data.job.id)
+          const payload = job.data || {}
+          try { await api("/jobs/dismiss", { id: job.id }) } catch (ignored) { /* 同上 */ }
+          if (!payload.ok) { setError(payload.error || job.error || "替换失败"); return }
+          setDone(payload); setDeferred([]); setAskReplace(false)
+        } catch (e) {
+          setError(e.message || String(e))
+        } finally { setBusy(""); setProgress(null) }
       }
 
       return h("div", { style: { display: "flex", flexDirection: "column", gap: "14px" } },
@@ -969,28 +1206,106 @@ window.__ModuleLoader__.load({
           h("b", null, "先看清楚，再装"),
           "　读取阶段解压、校验完整性、扫一遍风险，全部在内存里完成；只有你点「安装」才会碰 profile。安装走官方 ",
           h("code", { style: mono }, "dsh plugin add"), "，不手改 node_modules。"),
+        imports.length > 0
+          ? h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
+            h("div", { style: row },
+              h("div", { style: strong }, "已导入的整合包"),
+              h("span", { style: hint }, imports.length + " 份 · 可以同时留着，各自显示打包时的名字、作者与描述"),
+              h("button", { style: { ...chipBtn, marginLeft: "auto" }, onClick: () => setImports([]) }, "全部移除")),
+            h("div", { style: { display: "flex", flexDirection: "column", gap: "8px", maxHeight: "260px", overflow: "auto" } },
+              imports.map((item) => h("div", {
+                key: item.token,
+                style: {
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "3px",
+                  padding: "8px 10px",
+                  borderRadius: "8px",
+                  border: "0.5px solid " + (source.kind === "token" && source.token === item.token ? "#4C7DF0" : "var(--dsw-alias-border-l2)"),
+                },
+              },
+                h("div", { style: row },
+                  h("span", { style: { ...label, fontSize: "13px" } }, item.name),
+                  h(Tag, null, FORMAT_TEXT[item.format] || item.format || "整合包"),
+                  h("span", { style: hint }, item.plugins + " 个插件"),
+                  h("button", {
+                    style: { ...chipBtn, marginLeft: "auto" },
+                    disabled: busy !== "",
+                    onClick: () => pickImport(item),
+                  }, source.kind === "token" && source.token === item.token ? "当前选中" : "选择"),
+                  h("button", {
+                    style: { ...chipBtn, color: "var(--dsw-alias-label-tertiary, #8b8f99)" },
+                    onClick: () => {
+                      removeImport(item.token)
+                      if (source.kind === "token" && source.token === item.token) {
+                        setSource({ kind: "url", url: "", file: "" })
+                        setPreview(null)
+                      }
+                    },
+                  }, "移除")),
+                h("div", { style: { ...hint, fontSize: "10.5px" } },
+                  "作者：" + (item.author || "未填写") + "　·　生成于 " + (item.createdAt ? when(item.createdAt) : "未知")),
+                item.description ? h("div", { style: { ...hint, fontSize: "11.5px", color: "var(--dsw-alias-label-secondary, #b6bac3)" } }, item.description) : null,
+                item.fileName ? h("div", { style: { ...hint, fontSize: "10px" } }, item.fileName) : null))))
+          : null,
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "10px" } },
           h("div", { style: row },
             h("button", { style: source.kind === "url" ? btnPrimary : btn, onClick: () => setSource({ ...source, kind: "url" }) }, "从链接读取"),
-            h("button", { style: source.kind === "file" ? btnPrimary : btn, onClick: () => setSource({ ...source, kind: "file" }) }, "从本机 packs/ 读取")),
+            h("button", { style: source.kind === "file" ? btnPrimary : btn, onClick: () => setSource({ ...source, kind: "file" }) }, "从本机文件读取"),
+            h("input", {
+              type: "file",
+              accept: ".dshpack",
+              ref: fileRef,
+              style: { display: "none" },
+              onChange: (e) => {
+                const picked = e && e.target && e.target.files ? e.target.files[0] : null
+                if (picked) pickFile(picked)
+                if (e && e.target) e.target.value = ""
+              },
+            }),
+            h("button", { style: btn, disabled: busy !== "", onClick: () => { if (fileRef.current) fileRef.current.click() } }, busy === "upload" ? "读取中…" : "选择文件…"),
+            source.kind === "token"
+              ? h("button", { style: btnPrimary, onClick: () => { if (imports.length === 0) setSource({ ...source, kind: "url" }) } }, "已导入的整合包")
+              : null),
           source.kind === "url"
             ? h("input", { style: { ...input, width: "100%" }, placeholder: "https://…/xxx.dshpack", value: source.url, onChange: (e) => setSource({ ...source, url: e.target.value }) })
-            : h("div", { style: row },
-              h("div", { style: { display: "flex", flexDirection: "column", gap: "3px", flex: "1 1 260px", maxHeight: "170px", overflow: "auto" } },
-                packs.length === 0 ? h("div", { style: hint }, "packs 目录还是空的。先去打包页生成一个，或把 .dshpack 放进 " + ((props.status && props.status.paths && props.status.paths.packs) || "packs")) : null,
-                packs.map((p) => h("label", { key: p.name, style: { ...row, gap: "6px", cursor: "pointer" } },
-                  h("input", { type: "radio", name: "packfile", checked: source.file === p.name, onChange: () => setSource({ ...source, file: p.name }) }),
+            : h("div", { style: { display: "flex", flexDirection: "column", gap: "8px" } },
+              h("div", { style: row },
+                h("input", {
+                  style: { ...input, flex: "1 1 320px" },
+                  placeholder: "整合包所在的目录（默认是插件自己的 packs）",
+                  value: dirInput,
+                  onChange: (e) => setDirInput(e.target.value),
+                  onKeyDown: (e) => { if (e.key === "Enter") reloadPacks(dirInput) },
+                }),
+                h("button", { style: btn, disabled: busy !== "", onClick: browseFolder }, busy === "dir" ? "选择中…" : "浏览文件夹…"),
+                h("button", { style: btn, onClick: () => reloadPacks(dirInput) }, "读这个目录"),
+                h("button", { style: btn, onClick: () => reloadPacks() }, "回到默认")),
+              dirInfo.error ? h("div", { style: { ...hint, color: "#ff6b6b" } }, dirInfo.error) : null,
+              h("div", { style: { display: "flex", flexDirection: "column", gap: "3px", maxHeight: "170px", overflow: "auto" } },
+                packs.length === 0 ? h("div", { style: hint }, "这个目录里没有 .dshpack。先去打包页生成一个，或者把文件拖到界面上。") : null,
+                packs.map((p) => h("label", { key: p.path || p.name, style: { ...row, gap: "6px", cursor: "pointer" } },
+                  h("input", { type: "radio", name: "packfile", checked: source.file === (p.path || p.name), onChange: () => setSource({ ...source, file: p.path || p.name }) }),
                   h("span", { style: label }, p.name),
                   h("span", { style: hint }, bytes(p.size) + " · " + when(p.mtime))))),
-              h("button", { style: btn, onClick: reloadPacks }, "刷新")),
+              dirInfo.dir ? h("div", { style: { ...hint, fontSize: "10.5px" } }, "当前目录：" + dirInfo.dir) : null),
           h("div", { style: row },
             h(Switch, { checked: options.keepLocal, label: "保留本地已有修改（不覆盖已装插件）", onChange: (v) => setOptions({ ...options, keepLocal: v }) }),
             h(Switch, { checked: options.applyConfig, label: "安装后回填包内配置", onChange: (v) => setOptions({ ...options, applyConfig: v }) }),
+            h(Switch, { checked: options.preferMarket, label: "联网时优先用插件市场的版本（市场查不到就用包内的）", onChange: (v) => setOptions({ ...options, preferMarket: v }) }),
             h(Switch, { checked: options.enableBundles, label: "安装后直接启用（登记 bundle，重启后加载；默认关）", onChange: (v) => setOptions({ ...options, enableBundles: v }) }),
             h(Switch, { checked: options.force, label: "忽略阻断（我知道自己在干什么）", onChange: (v) => setOptions({ ...options, force: v }) })),
           h("div", { style: row },
             h("button", { style: btnPrimary, disabled: busy !== "" || (source.kind === "url" ? !source.url.trim() : !source.file), onClick: inspect }, busy === "inspect" ? "检测中…" : "检测这个包"),
-            source.kind === "file" && source.file ? h("span", { style: hint }, "选中：" + source.file) : null)),
+            source.kind === "file" && source.file ? h("span", { style: hint }, "选中：" + source.file) : null,
+            source.kind === "token" ? h("span", { style: hint }, "这份是导入到列表里的包，已经读过一遍；点上面的「选择」可以换另一份") : null)),
+        progress
+          ? h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
+            h("div", { style: row },
+              h("div", { style: strong }, "正在安装"),
+              h("span", { style: hint }, (progress.note || "") + "　" + Math.round(progress.pct || 0) + "%")),
+            h(ProgressBar, { pct: progress.pct }))
+          : null,
         error ? h(Notice, { tone: "bad" }, error) : null,
         preview ? h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "10px" } },
           h("div", { style: row },
@@ -1011,6 +1326,16 @@ window.__ModuleLoader__.load({
           h("div", { style: row },
             h(Switch, { checked: options.dryRun, label: "只演练不落地", onChange: (v) => setOptions({ ...options, dryRun: v }) }),
             h("button", { style: btnPrimary, disabled: busy !== "", onClick: install }, busy === "install" ? "安装中…" : (options.dryRun ? "演练一次" : "安装这个整合包"))))
+          : null,
+        askReplace && deferred.length > 0
+          ? h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
+            h("div", { style: { ...label, color: "#ffb020" } }, "以下 " + deferred.length + " 个插件本机已经装了，这次先跳过没动它们："),
+            deferred.map((d) => h("div", { key: d.name, style: mono },
+              "· " + d.name + "　本机 " + (d.localVersion || "未知") + " → 包内 " + (d.packVersion || "未知") + (d.sameVersion ? "（版本相同）" : ""))),
+            h("div", { style: hint }, "要保留本机版本就直接完成；要换成包内版本点下面这个（会覆盖本机那份）。"),
+            h("div", { style: row },
+              h("button", { style: btn, disabled: busy !== "", onClick: () => { setAskReplace(false) } }, "直接完成（保留本机版本）"),
+              h("button", { style: btnPrimary, disabled: busy !== "", onClick: () => replaceDeferred(deferred.map((d) => d.name)) }, "替换为包内版本（" + deferred.length + " 个）")))
           : null,
         done ? h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
           h("div", { style: row },
@@ -1171,7 +1496,9 @@ window.__ModuleLoader__.load({
         },
       }, text)
 
-      return h("div", { style: { height: "100%", overflow: "auto", boxSizing: "border-box", padding: "22px 26px 44px", color: "var(--dsw-alias-label-primary)" } },
+      return h("div", {
+        style: { height: "100%", overflow: "auto", boxSizing: "border-box", padding: "22px 26px 44px", color: "var(--dsw-alias-label-primary)", position: "relative" },
+      },
         h("div", { style: { maxWidth: "1020px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "14px" } },
           h("div", { style: { display: "flex", alignItems: "baseline", gap: "10px", flexWrap: "wrap" } },
             h("h2", { style: { margin: 0, fontSize: "20px", fontWeight: 600 } }, "整合包"),
@@ -1257,6 +1584,13 @@ window.__ModuleLoader__.load({
           else for (const item of items) unmount(group + ":" + item.slot)
         }
       }
+      try {
+        const workspace = ctx.get('uiWorkspace')
+        if (workspace && typeof workspace.pickDirectory === "function") {
+          pickDirectoryHost = () => workspace.pickDirectory()
+        }
+      } catch {}
+
       ctx.effect(() => {
         const unsubscribe = subscribePlacement(sync)
         sync(placement.value)

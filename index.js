@@ -9,7 +9,7 @@ import path from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { loadConfig, saveConfig, pathsFor, profileName, readHistory, appendHistory, appendLog, ensureDir, slugify, DEFAULT_CONFIG } from './lib/store.mjs'
 import { listInstalled, dshVersion, readProfilePackage, readBundles } from './lib/profile.mjs'
-import { downloadPackage, npmMetadata, fetchLimited, relativeTime } from './lib/registry.mjs'
+import { downloadPackage, npmMetadata, pickVersion, fetchLimited, relativeTime } from './lib/registry.mjs'
 import { buildPack, PackRefused } from './lib/pack.mjs'
 import { inspectPackBuffer, installPack, readPackFromUrl, InstallRefused } from './lib/install.mjs'
 import { checkCompatibility } from './lib/compat.mjs'
@@ -22,6 +22,8 @@ import { buildReadme, pluginSummary } from './lib/manifest.mjs'
 
 const VERSION = '0.1.0'
 const MAX_JSON_BODY = 1024 * 1024
+// 直接拖进来的整合包走原始字节（不塞 base64），上限与单次下载一致，够装大包
+const MAX_DROP_BODY = 256 * 1024 * 1024
 const PENDING_TTL = 30 * 60 * 1000
 const PENDING_MAX = 4
 const PENDING_BYTES = 512 * 1024 * 1024
@@ -40,6 +42,22 @@ const readBody = (req, limit = MAX_JSON_BODY) => new Promise((resolve, reject) =
     chunks.push(chunk)
   })
   req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+  req.on('error', reject)
+})
+
+const readRawBody = (req, limit = MAX_DROP_BODY) => new Promise((resolve, reject) => {
+  let size = 0
+  const chunks = []
+  req.on('data', (chunk) => {
+    size += chunk.length
+    if (size > limit) {
+      reject(Object.assign(new Error('整合包太大：上限 ' + Math.round(limit / 1024 / 1024) + ' MB'), { statusCode: 413 }))
+      req.destroy()
+      return
+    }
+    chunks.push(chunk)
+  })
+  req.on('end', () => resolve(Buffer.concat(chunks)))
   req.on('error', reject)
 })
 
@@ -313,18 +331,42 @@ export default {
     // —— 打包（支持后台任务：左下角悬浮窗要进度，且允许同时打多个包） ——
     const jobs = new Map()
     let jobSeq = 0
-    const JOBS_KEEP = 10 * 60 * 1000
+    // 收尾的记录按状态分别留：完成的多留一会儿方便回看，失败/取消的很快就清，别堆在眼前。
+    // 秒数来自设置 jobKeepSeconds（0 = 收尾就清），测试就靠它把时间压到零。
+    const FAILED_KEEP = 15 * 1000
+    const RUNNING_STALE = 10 * 60 * 1000
+    const keepMs = () => Math.max(0, Number(config.jobKeepSeconds) || 0) * 1000
+    const heartbeatAge = (job, now) => {
+      const stamp = Date.parse(job.updatedAt || job.finishedAt || job.startedAt || '') || 0
+      return stamp > 0 ? now - stamp : 0
+    }
+    // 卡住的 running（进程还在但心跳没了）：标成失败，让它走失败那条清理路径
+    const reapStuck = (job, now) => {
+      if (job.status !== 'running') return
+      if (heartbeatAge(job, now) <= RUNNING_STALE) return
+      job.status = 'failed'
+      job.error = '卡住了：很久没有新进度，已自动收掉'
+      job.note = '已自动收掉'
+      job.finishedAt = new Date().toISOString()
+      job.updatedAt = job.finishedAt
+      job.updatedAt = job.finishedAt
+    }
     const pruneJobs = () => {
-      const cut = Date.now() - JOBS_KEEP
+      const now = Date.now()
+      const keep = keepMs()
       for (const [id, job] of jobs) {
+        reapStuck(job, now)
+        // 停在风险点等你决定的，一直留着
+        if (job.status === 'paused') continue
         if (job.status === 'running') continue
-        const stamp = Date.parse(job.finishedAt || job.startedAt) || 0
-        if (stamp && stamp < cut) jobs.delete(id)
+        const age = heartbeatAge(job, now)
+        const limit = job.status === 'done' || job.status === 'acked' ? keep : Math.min(keep, FAILED_KEEP)
+        if (limit <= 0 || age > limit) jobs.delete(id)
       }
       for (const id of [...jobs.keys()]) {
         if (jobs.size <= 20) break
         const job = jobs.get(id)
-        if (job.status === 'running') continue
+        if (job.status === 'running' || job.status === 'paused') continue
         jobs.delete(id)
       }
     }
@@ -337,6 +379,8 @@ export default {
         pct: 0,
         note: '准备中',
         startedAt: new Date().toISOString(),
+        // 最近一次有动静的时间：用来判断「还活着」还是「卡住了」
+        updatedAt: new Date().toISOString(),
         finishedAt: '',
         error: '',
         data: null,
@@ -386,13 +430,19 @@ export default {
       }
       try {
         const result = await buildPack({
-          selection: selection.map((item) => ({
-            name: String(item.name || ''),
-            source: item.source === 'npm' ? 'npm' : 'profile',
-            spec: item.spec ? String(item.spec) : '',
-            mode: item.mode === 'local' ? 'local' : item.mode === 'base' ? 'base' : undefined,
-            download: (spec) => downloadPackage(String(item.name || ''), spec || item.spec || '', config),
-          })),
+          selection: selection.map((item) => {
+            const name = String(item.name || '')
+            const here = installed.some((p) => p.name === name)
+            // 市场里没装的插件也能打包：本机没有这份代码，就从 registry 按版本取包
+            const source = item.source === 'npm' || item.source === 'market' || !here ? 'npm' : 'profile'
+            return {
+              name,
+              source,
+              spec: item.spec ? String(item.spec) : (source === 'npm' ? String(item.version || '') : ''),
+              mode: item.mode === 'local' ? 'local' : item.mode === 'base' ? 'base' : undefined,
+              download: (spec) => downloadPackage(name, spec || item.spec || String(item.version || ''), config),
+            }
+          }),
           options: {
             includePayload: options.includePayload !== false,
             includeConfig: options.includeConfig !== false,
@@ -484,6 +534,7 @@ export default {
             : [],
         }
         job.finishedAt = new Date().toISOString()
+        job.updatedAt = job.finishedAt
         if (payload.needsAck === true) {
           job.status = 'paused'
           job.note = '检测到风险，等你决定'
@@ -505,6 +556,7 @@ export default {
       // 失败/取消也把原因放进 error，进度窗那一行能直接看到为什么卡住
       if (!(payload && payload.ok)) job.error = (payload && payload.error) || job.note
       job.finishedAt = new Date().toISOString()
+      job.updatedAt = job.finishedAt
     }
     const startPackJob = (body, label) => {
       const job = createJob('pack', label || ('打包「' + String((body.options && body.options.name) || 'DSH 整合包') + '」'))
@@ -522,6 +574,7 @@ export default {
           job.error = String((error && error.message) || error)
           job.note = '失败'
           job.finishedAt = new Date().toISOString()
+          job.updatedAt = job.finishedAt
         })
       return job
     }
@@ -571,6 +624,7 @@ export default {
           job.error = String((error && error.message) || error)
           job.note = '失败'
           job.finishedAt = new Date().toISOString()
+          job.updatedAt = job.finishedAt
         })
       json(res, 200, { ok: true, job: publicJob(job) })
     })
@@ -586,17 +640,24 @@ export default {
       json(res, 200, { ok: true, removed: id })
     })
 
-    // 清空进程：删掉所有收尾记录（完成的、失败的、取消的、超上限卡住的都算），
-    // 只有还在跑的与停在风险点等决定的留着。
+    // 清空进程：除了「正在跑」与「停在风险点等决定」，其余一律删——
+    // 完成的、失败的、取消的、超上限卡住的、以及假 running（心跳停了）都带走。
     route('/dsh-modpack-kit/api/jobs/clear', async (req, res) => {
       if (!needPost(req, res)) return
-      const keep = new Set(['running', 'paused'])
       const removed = []
+      const now = Date.now()
       for (const [id, job] of [...jobs.entries()]) {
-        if (keep.has(job.status)) continue
+        if (job.status === 'paused') continue
+        if (job.status === 'running') {
+          // 还活着的不动；心跳停了的先标成失败，再按收尾清掉
+          reapStuck(job, now)
+          if (job.status === 'running') continue
+        }
+        // 卡住的 running：没有文件落盘（包在内存里组装），直接摘掉即可
         jobs.delete(id)
         removed.push(id)
       }
+      pruneJobs()
       json(res, 200, { ok: true, removed, jobs: [...jobs.values()].map(publicJob) })
     })
 
@@ -659,19 +720,91 @@ export default {
       json(res, 200, { ok: true, path: target, size: item.buffer.length })
     })
 
-    route('/dsh-modpack-kit/api/packs', async (req, res) => {
-      if (req.method !== 'GET') { json(res, 405, { ok: false }); return }
-      const dir = pathsFor(config).packs
+    // 列某个目录下的整合包：GET 读本插件自己的 packs 目录，POST { dir } 读你指定的目录
+    const listPacks = (dir) => {
       const items = []
+      let error = ''
       try {
-        for (const dirent of fs.readdirSync(dir, { withFileTypes: true })) {
-          if (!dirent.isFile() || !dirent.name.endsWith('.dshpack')) continue
-          const stat = fs.statSync(path.join(dir, dirent.name))
-          items.push({ name: dirent.name, size: stat.size, mtime: stat.mtime.toISOString() })
+        const stat = fs.statSync(dir)
+        if (!stat.isDirectory()) error = '这个路径不是目录'
+      } catch (e) {
+        error = '这个目录读不到（不存在或没有权限）'
+      }
+      if (!error) {
+        try {
+          for (const dirent of fs.readdirSync(dir, { withFileTypes: true })) {
+            if (!dirent.isFile() || !dirent.name.toLowerCase().endsWith('.dshpack')) continue
+            const stat = fs.statSync(path.join(dir, dirent.name))
+            items.push({ name: dirent.name, size: stat.size, mtime: stat.mtime.toISOString(), path: path.join(dir, dirent.name) })
+          }
+        } catch (e) {
+          error = String((e && e.message) || e)
         }
-      } catch {}
+      }
       items.sort((a, b) => (a.mtime < b.mtime ? 1 : -1))
-      json(res, 200, { ok: true, dir, items })
+      return { error, items }
+    }
+
+    route('/dsh-modpack-kit/api/packs', async (req, res) => {
+      if (req.method === 'GET') {
+        const dir = pathsFor(config).packs
+        const listed = listPacks(dir)
+        json(res, 200, { ok: !listed.error, dir, items: listed.items, error: listed.error })
+        return
+      }
+      if (req.method !== 'POST') { json(res, 405, { ok: false }); return }
+      const body = asJson(await readBody(req), {})
+      const raw = String(body.dir || '').trim()
+      const dir = raw ? path.resolve(raw) : pathsFor(config).packs
+      const listed = listPacks(dir)
+      json(res, 200, { ok: !listed.error, dir, items: listed.items, error: listed.error })
+    })
+
+    // 拖到界面上的整合包：原始字节能走就走原始字节，走不通再走 base64 JSON
+    route('/dsh-modpack-kit/api/pack/drop', async (req, res) => {
+      if (!needPost(req, res)) return
+      let bytes = null
+      const contentType = String(req.headers['content-type'] || '').toLowerCase()
+      try {
+        if (contentType.includes('application/json')) {
+          // 有些环境不许 POST 二进制，界面会退回 base64：这里同样收
+          const body = asJson(await readBody(req, MAX_DROP_BODY), {}) || {}
+          const raw = typeof body.data === 'string' ? body.data : ''
+          if (!raw) { json(res, 400, { ok: false, error: '没有收到整合包内容' }); return }
+          bytes = Buffer.from(raw, 'base64')
+        } else {
+          bytes = await readRawBody(req)
+        }
+      } catch (error) {
+        json(res, 413, { ok: false, error: String((error && error.message) || error) })
+        return
+      }
+      if (!bytes || bytes.length < 32) { json(res, 400, { ok: false, error: '这个文件看起来不是整合包（太小了）' }); return }
+      try {
+        const inspected = inspectPackBuffer(bytes, {
+          config,
+          scanBeforeInstall: config.scanBeforeInstall !== false,
+          extraScanRules: Array.isArray(config.extraScanRules) ? config.extraScanRules : [],
+        })
+        const fileName = slugify(inspected.manifest.name || 'dropped', 'pack') + '.dshpack'
+        const token = rememberPending(fileName, { buffer: bytes, manifest: inspected.manifest, report: inspected.report, scan: inspected.scan })
+        json(res, 200, {
+          ok: true,
+          token,
+          fileName,
+          size: bytes.length,
+          manifest: inspected.manifest,
+          integrity: inspected.integrity,
+          scan: inspected.scan,
+          scanGroups: groupFindings(inspected.scan.findings, inspected.manifest.plugins),
+          report: inspected.report,
+          blockingReasons: inspected.blockingReasons,
+          notes: inspected.notes,
+          compat: compatFor(inspected.manifest),
+        })
+      } catch (error) {
+        json(res, 200, { ok: false, error: String((error && error.message) || error) })
+      }
     })
 
     async function inspectInput(body) {
@@ -717,51 +850,186 @@ export default {
     })
 
     // —— 安装 ——
+    // —— 安装：先跳过本机已装的，装完其余再问要不要替换 ——
+    const pendingInstalls = new Map()
+    const rememberInstall = (inspected) => {
+      const token = 'inst_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
+      pendingInstalls.set(token, { inspected, at: Date.now() })
+      // 上限 4 份、30 分钟过期：别让内存一直攒着包
+      for (const [key, item] of pendingInstalls) {
+        if (pendingInstalls.size <= 4) break
+        if (key === token) continue
+        pendingInstalls.delete(key)
+      }
+      for (const [key, item] of pendingInstalls) {
+        if (Date.now() - item.at > 30 * 60 * 1000) pendingInstalls.delete(key)
+      }
+      return token
+    }
+
+    const installOptionsOf = (body) => ({
+      force: body.force === true,
+      keepLocal: body.keepLocal !== false,
+      applyConfig: body.applyConfig !== false,
+      dryRun: body.dryRun === true,
+      // 是否登记 bundle：请求里给了就听请求的，没给就听设置里的 enableOnInstall（默认关）。
+      enableBundles: typeof body.enableBundles === 'boolean' ? body.enableBundles : config.enableOnInstall === true,
+      // 默认：本机已装（同名或同插件不同版本）先跳过，其余照装，最后再问
+      deferExisting: body.deferExisting !== false && body.replaceExisting !== true,
+      replaceExisting: body.replaceExisting === true,
+      only: Array.isArray(body.only) && body.only.length > 0 ? body.only.map(String) : null,
+      // 联网且有插件市场时优先按市场版本装（默认开；请求里能逐次关掉）
+      preferMarket: typeof body.preferMarket === 'boolean' ? body.preferMarket : config.preferMarketOnInstall !== false,
+    })
+
+    const runInstall = async (inspected, body, job) => {
+      const options = installOptionsOf(body)
+      const push = (pct, note) => {
+        if (!job) return
+        if (job.cancelled) throw new JobCancelled('已取消')
+        job.pct = pct
+        job.note = note || job.note
+        job.updatedAt = new Date().toISOString()
+      }
+      const scanGroups = groupFindings(inspected.scan.findings, inspected.manifest.plugins)
+      if (inspected.blockingReasons.length > 0 && !options.force) {
+        return {
+          ok: false,
+          refused: true,
+          error: inspected.blockingReasons.join('；'),
+          integrity: inspected.integrity,
+          scan: inspected.scan,
+          scanGroups,
+          report: inspected.report,
+        }
+      }
+      push(12, '开始安装')
+      const result = await installPack({
+        manifest: inspected.manifest,
+        entries: inspected.entries,
+        config,
+        options: { ...options, onProgress: (event) => push(event.pct, event.note) },
+        context: {
+          profileDir: profileDir(),
+          // 联网且市场可用时，优先按市场版本装（能用就返回 name@version，用不了返回 null 走包内）
+          resolveMarket: async (plugin) => {
+            try {
+              const { meta } = await npmMetadata(plugin.name, config)
+              const version = pickVersion(meta, plugin.version || plugin.spec || '') || pickVersion(meta, '')
+              if (!version) return null
+              appendLog('market ' + plugin.name + '@' + version + ' 优先于包内 ' + (plugin.version || '（未标版本）'))
+              return { spec: plugin.name + '@' + version, version }
+            } catch (error) {
+              appendLog('market miss ' + plugin.name + ': ' + String((error && error.message) || error))
+              return null
+            }
+          },
+          resolveSource: async (plugin, packRoot) => {
+            const downloaded = await downloadPackage(plugin.name, plugin.version || plugin.requested || '', config)
+            const target = path.join(packRoot, 'plugins', plugin.dirName || plugin.name)
+            ensureDir(target)
+            for (const entry of downloaded.entries) {
+              const dest = path.join(target, entry.name)
+              if (!path.resolve(dest).startsWith(path.resolve(target) + path.sep)) continue
+              ensureDir(path.dirname(dest))
+              fs.writeFileSync(dest, entry.data)
+            }
+            appendLog('resolve ' + plugin.name + '@' + downloaded.version + ' from ' + downloaded.registry)
+            return target
+          },
+        },
+      })
+      appendHistory({ at: new Date().toISOString(), kind: 'install', name: inspected.manifest.name, format: inspected.manifest.format, ok: result.ok, pack: inspected.manifest.name, actions: result.actions.length }, config.historyLimit)
+      const token = rememberInstall(inspected)
+      return {
+        ok: result.ok,
+        ...result,
+        token,
+        manifest: inspected.manifest,
+        scan: inspected.scan,
+        scanGroups,
+        report: inspected.report,
+        integrity: inspected.integrity,
+      }
+    }
+
+    const performInstall = async (body, job) => {
+      try {
+        const push = (pct, note) => {
+          if (!job) return
+          if (job.cancelled) throw new JobCancelled('已取消')
+          job.pct = pct
+          job.note = note || job.note
+        }
+        push(4, '读取整合包')
+        const inspected = await inspectInput(body)
+        return await runInstall(inspected, body, job)
+      } catch (error) {
+        if (error instanceof JobCancelled) return { ok: false, cancelled: true, error: '已取消（没有改动 profile）' }
+        return { ok: false, error: String((error && error.message) || error) }
+      }
+    }
+
+    const finishInstallJob = (job, payload) => {
+      job.status = payload && payload.ok ? 'done' : payload && payload.cancelled === true ? 'cancelled' : 'failed'
+      job.data = payload
+      job.pct = payload && payload.ok ? 100 : job.pct
+      job.note = payload && payload.ok ? '完成' : ((payload && payload.error) || '已停止')
+      if (!(payload && payload.ok)) job.error = (payload && payload.error) || job.note
+      job.finishedAt = new Date().toISOString()
+      job.updatedAt = job.finishedAt
+    }
+
+    const startInstallJob = (body, label) => {
+      const job = createJob('install', label || '安装整合包')
+      performInstall(body, job)
+        .then((payload) => finishInstallJob(job, payload))
+        .catch((error) => {
+          job.status = 'failed'
+          job.error = String((error && error.message) || error)
+          job.note = '失败'
+          job.finishedAt = new Date().toISOString()
+          job.updatedAt = job.finishedAt
+        })
+      return job
+    }
+
     route('/dsh-modpack-kit/api/install', async (req, res) => {
       if (!needPost(req, res)) return
       const body = asJson(await readBody(req), {})
-      const options = {
-        force: body.force === true,
-        keepLocal: body.keepLocal !== false,
-        applyConfig: body.applyConfig !== false,
-        dryRun: body.dryRun === true,
-        // 是否登记 bundle：请求里给了就听请求的，没给就听设置里的 enableOnInstall（默认关）。
-        enableBundles: typeof body.enableBundles === 'boolean' ? body.enableBundles : config.enableOnInstall === true,
+      if (body.async === true || body.background === true) {
+        const job = startInstallJob(body, body.label ? String(body.label) : undefined)
+        json(res, 200, { ok: true, async: true, job: publicJob(job) })
+        return
       }
-      try {
-        const inspected = await inspectInput(body)
-        if (inspected.blockingReasons.length > 0 && !options.force) {
-          const refused = new InstallRefused(inspected.blockingReasons.join('；'), inspected.scan)
-          json(res, 200, { ok: false, refused: true, error: refused.message, integrity: inspected.integrity, scan: inspected.scan, scanGroups: groupFindings(inspected.scan.findings, inspected.manifest.plugins), report: inspected.report })
-          return
-        }
-        const result = await installPack({
-          manifest: inspected.manifest,
-          entries: inspected.entries,
-          config,
-          options,
-          context: {
-            profileDir: profileDir(),
-            resolveSource: async (plugin, packRoot) => {
-              const downloaded = await downloadPackage(plugin.name, plugin.version || plugin.requested || '', config)
-              const target = path.join(packRoot, 'plugins', plugin.dirName || plugin.name)
-              ensureDir(target)
-              for (const entry of downloaded.entries) {
-                const dest = path.join(target, entry.name)
-                if (!path.resolve(dest).startsWith(path.resolve(target) + path.sep)) continue
-                ensureDir(path.dirname(dest))
-                fs.writeFileSync(dest, entry.data)
-              }
-              appendLog('resolve ' + plugin.name + '@' + downloaded.version + ' from ' + downloaded.registry)
-              return target
-            },
-          },
-        })
-        appendHistory({ at: new Date().toISOString(), kind: 'install', name: inspected.manifest.name, format: inspected.manifest.format, ok: result.ok, pack: inspected.manifest.name, actions: result.actions.length }, config.historyLimit)
-        json(res, 200, { ok: result.ok, ...result, manifest: inspected.manifest, scan: inspected.scan, scanGroups: groupFindings(inspected.scan.findings, inspected.manifest.plugins), report: inspected.report, integrity: inspected.integrity })
-      } catch (error) {
-        json(res, 200, { ok: false, error: String((error && error.message) || error) })
+      const payload = await performInstall(body, null)
+      json(res, 200, payload)
+    })
+
+    // 装完的追问：把刚才跳过的那些换成包内版本
+    route('/dsh-modpack-kit/api/install/replace', async (req, res) => {
+      if (!needPost(req, res)) return
+      const body = asJson(await readBody(req), {})
+      const token = String(body.token || '')
+      const item = pendingInstalls.get(token)
+      if (!item) { json(res, 400, { ok: false, error: '这次安装的上下文已过期，请重新读一遍整合包' }); return }
+      const names = Array.isArray(body.names) && body.names.length > 0 ? body.names.map(String) : null
+      if (body.async === true || body.background === true) {
+        const job = createJob('install', '替换为包内版本' + (names ? '（' + names.length + ' 个）' : ''))
+        runInstall(item.inspected, { ...body, replaceExisting: true, keepLocal: false, only: names }, job)
+          .then((payload) => finishInstallJob(job, payload))
+          .catch((error) => {
+            job.status = 'failed'
+            job.error = String((error && error.message) || error)
+            job.note = '失败'
+            job.finishedAt = new Date().toISOString()
+            job.updatedAt = job.finishedAt
+          })
+        json(res, 200, { ok: true, async: true, job: publicJob(job) })
+        return
       }
+      const payload = await runInstall(item.inspected, { ...body, replaceExisting: true, keepLocal: false, only: names }, null)
+      json(res, 200, payload)
     })
 
     // —— 历史 ——
