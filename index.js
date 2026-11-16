@@ -14,6 +14,7 @@ import { buildPack, PackRefused } from './lib/pack.mjs'
 import { inspectPackBuffer, installPack, readPackFromUrl, InstallRefused } from './lib/install.mjs'
 import { checkCompatibility } from './lib/compat.mjs'
 import { classifyPlugin } from './lib/classify.mjs'
+import { groupFindings } from './lib/scan.mjs'
 import { catalogSummary, searchCatalog, syncCatalog, categoryMapFor, lookupPlugins } from './lib/market-catalog.mjs'
 import { parseYaml } from './lib/yamlish.mjs'
 import { readPatch } from './lib/profile.mjs'
@@ -309,21 +310,80 @@ export default {
       }
     })
 
-    // —— 打包 ——
-    route('/dsh-modpack-kit/api/pack', async (req, res) => {
-      if (!needPost(req, res)) return
-      const body = asJson(await readBody(req), {})
+    // —— 打包（支持后台任务：左下角悬浮窗要进度，且允许同时打多个包） ——
+    const jobs = new Map()
+    let jobSeq = 0
+    const JOBS_KEEP = 10 * 60 * 1000
+    const pruneJobs = () => {
+      const cut = Date.now() - JOBS_KEEP
+      for (const [id, job] of jobs) {
+        if (job.status === 'running') continue
+        const stamp = Date.parse(job.finishedAt || job.startedAt) || 0
+        if (stamp && stamp < cut) jobs.delete(id)
+      }
+      for (const id of [...jobs.keys()]) {
+        if (jobs.size <= 20) break
+        const job = jobs.get(id)
+        if (job.status === 'running') continue
+        jobs.delete(id)
+      }
+    }
+    const createJob = (kind, label) => {
+      const job = {
+        id: 'job_' + (++jobSeq).toString(36) + '_' + Date.now().toString(36),
+        kind,
+        label,
+        status: 'running',
+        pct: 0,
+        note: '准备中',
+        startedAt: new Date().toISOString(),
+        finishedAt: '',
+        error: '',
+        data: null,
+        // 风险停下来的任务：保留原始请求，等你选「立即停止」还是「我知道在干什么」
+        risk: null,
+        body: null,
+      }
+      jobs.set(job.id, job)
+      pruneJobs()
+      return job
+    }
+    const publicJob = (job) => ({
+      id: job.id,
+      kind: job.kind,
+      label: job.label,
+      status: job.status,
+      pct: job.pct,
+      note: job.note,
+      startedAt: job.startedAt,
+      finishedAt: job.finishedAt,
+      error: job.error,
+      data: job.data,
+      risk: job.risk,
+      // 只有「可确认继续」的风险任务才给「我知道在干什么」；停下来的任务都能删
+      canAck: Boolean(job.risk && job.risk.needsAck && job.status === 'paused'),
+      canDismiss: job.status !== 'running',
+    })
+
+    class JobCancelled extends Error {}
+    const performPack = async (body, job, resume = null) => {
       const selection = Array.isArray(body.selection) ? body.selection : []
-      if (selection.length === 0) { json(res, 400, { ok: false, error: '没有选择任何插件' }); return }
       const options = body.options && typeof body.options === 'object' ? body.options : {}
       const dir = profileDir()
       const installed = installedOrEmpty()
+      const dshVersionNow = (() => { try { return dshVersion(dir) } catch { return '' } })()
       // 市场目录里能查到的插件：风险项默认放行，但需调用方 acknowledge
       let trusted = []
       try {
         const look = lookupPlugins(config, selection.map((item) => String(item.name || '')).filter(Boolean))
         trusted = Object.keys(look || {})
       } catch { trusted = [] }
+      const onProgress = (event) => {
+        if (!job) return
+        if (job.cancelled) throw new JobCancelled('已取消')
+        job.pct = event.pct
+        job.note = event.note || job.note
+      }
       try {
         const result = await buildPack({
           selection: selection.map((item) => ({
@@ -342,19 +402,20 @@ export default {
             acknowledge: options.acknowledge === true,
             trusted,
             keepLocal: options.keepLocal !== false,
-            // 扫描是强制的，客户端传什么都不认
             scanBeforePack: true,
+            onProgress,
             name: String(options.name || 'DSH 整合包'),
             description: String(options.description || ''),
             author: String(options.author || ''),
             license: String(options.license || ''),
             homepage: String(options.homepage || ''),
             extensions: options.extensions && typeof options.extensions === 'object' ? options.extensions : {},
+            resume: resume && typeof resume === 'object' ? resume : null,
           },
           context: {
             config,
             profileDir: dir,
-            dshVersion: (() => { try { return dshVersion(dir) } catch { return '' } })(),
+            dshVersion: dshVersionNow,
             installed,
             pluginVersion: VERSION,
             extraScanRules: Array.isArray(config.extraScanRules) ? config.extraScanRules : [],
@@ -364,31 +425,208 @@ export default {
         })
         const token = rememberPending(result.fileName, { buffer: result.buffer, manifest: result.manifest, report: result.report, scan: result.scan })
         appendHistory({ at: new Date().toISOString(), kind: 'pack', name: result.manifest.name, format: result.manifest.format, plugins: result.manifest.plugins.map((p) => p.name + '@' + p.version), size: result.size, high: result.scan.counts.high }, config.historyLimit)
-        json(res, 200, {
+        return {
           ok: true,
           token,
           fileName: result.fileName,
           size: result.size,
           manifest: result.manifest,
           scan: result.scan,
+          scanGroups: result.scanGroups,
           report: result.report,
           notes: result.notes,
-          compat: checkCompatibility(result.manifest.plugins, { installed, dshVersion: (() => { try { return dshVersion(dir) } catch { return '' } })(), nodeVersion: process.versions.node, config }),
-        })
+          compat: checkCompatibility(result.manifest.plugins, { installed, dshVersion: dshVersionNow, nodeVersion: process.versions.node, config }),
+        }
       } catch (error) {
+        if (error instanceof JobCancelled) {
+          // 取消发生在内存里：没有写入任何文件，直接丢弃缓冲
+          return { ok: false, cancelled: true, error: '已取消（未生成文件，本地没有残留）' }
+        }
         if (error instanceof PackRefused) {
-          json(res, 200, {
+          const scanGroups = (() => { try { return error.scan ? groupFindings(error.scan.findings, (selection || []).map((item) => ({ name: String(item.name || '') }))) : [] } catch { return [] } })()
+          return {
             ok: false,
             refused: true,
             needsAck: error.needsAck === true,
             trustedOnly: error.trustedOnly === true,
             error: error.message,
             scan: error.scan,
-          })
+            scanGroups,
+            checkpoint: error.checkpoint || null,
+          }
+        }
+        return { ok: false, error: String((error && error.message) || error) }
+      }
+    }
+
+    // 任务收尾：只有「能确认继续」的风险才停下等你点一下；其余情况照旧判失败
+    const finishPackJob = (job, payload) => {
+      if (payload && payload.ok !== true && payload.refused === true) {
+        const counts = (payload.scan && payload.scan.counts) || {}
+        job.risk = {
+          high: counts.high || 0,
+          medium: counts.medium || 0,
+          low: counts.low || 0,
+          needsAck: payload.needsAck === true,
+          trustedOnly: payload.trustedOnly === true,
+          message: payload.error || '检测到风险',
+          // 只留分组摘要，不给界面塞整份 findings
+          groups: Array.isArray(payload.scanGroups)
+            ? payload.scanGroups.map((g) => ({
+              plugin: g.plugin || '',
+              label: g.label,
+              origin: g.origin,
+              counts: g.counts,
+              samples: Array.isArray(g.findings)
+                ? g.findings.slice(0, 4).map((f) => ({ label: f.label, severity: f.severity, file: f.file, line: f.line }))
+                : [],
+            }))
+            : [],
+        }
+        job.finishedAt = new Date().toISOString()
+        if (payload.needsAck === true) {
+          job.status = 'paused'
+          job.note = '检测到风险，等你决定'
+          job.pct = Math.min(job.pct || 0, 66)
+          job.checkpoint = payload.checkpoint || null
+        } else {
+          // 市场目录里查不到：没有「我知道在干什么」这条路，直接判失败
+          job.status = 'failed'
+          job.error = payload.error || '检测到风险'
+          job.note = '检测到风险，已拒绝出包'
+          job.data = payload
+        }
+        return
+      }
+      job.status = payload && payload.ok ? 'done' : payload && payload.cancelled === true ? 'cancelled' : 'failed'
+      job.data = payload
+      job.pct = payload && payload.ok ? 100 : job.pct
+      job.note = payload && payload.ok ? '完成' : ((payload && payload.error) || '已停止')
+      // 失败/取消也把原因放进 error，进度窗那一行能直接看到为什么卡住
+      if (!(payload && payload.ok)) job.error = (payload && payload.error) || job.note
+      job.finishedAt = new Date().toISOString()
+    }
+    const startPackJob = (body, label) => {
+      const job = createJob('pack', label || ('打包「' + String((body.options && body.options.name) || 'DSH 整合包') + '」'))
+      // 留一份原始请求：风险停下来之后，界面上点「我知道在干什么」要能照原样再跑一次
+      try {
+        job.body = JSON.parse(JSON.stringify({
+          selection: Array.isArray(body.selection) ? body.selection : [],
+          options: body.options && typeof body.options === 'object' ? body.options : {},
+        }))
+      } catch { job.body = null }
+      performPack(body, job)
+        .then((payload) => finishPackJob(job, payload))
+        .catch((error) => {
+          job.status = 'failed'
+          job.error = String((error && error.message) || error)
+          job.note = '失败'
+          job.finishedAt = new Date().toISOString()
+        })
+      return job
+    }
+
+    route('/dsh-modpack-kit/api/pack', async (req, res) => {
+      if (!needPost(req, res)) return
+      const body = asJson(await readBody(req), {})
+      const selection = Array.isArray(body.selection) ? body.selection : []
+      if (selection.length === 0) { json(res, 400, { ok: false, error: '没有选择任何插件' }); return }
+      if (body.async === true || body.background === true) {
+        const job = startPackJob(body)
+        json(res, 200, { ok: true, async: true, job: publicJob(job) })
+        return
+      }
+      const payload = await performPack(body, null)
+      json(res, 200, payload)
+    })
+
+    // 风险停下来之后：只有「我知道在干什么」，点它就在同一个任务里接着跑完
+    route('/dsh-modpack-kit/api/jobs/ack', async (req, res) => {
+      if (!needPost(req, res)) return
+      const body = asJson(await readBody(req), {})
+      const job = jobs.get(String(body.id || ''))
+      if (!job) { json(res, 404, { ok: false, error: '没有这个任务（可能已完成并过期）' }); return }
+      if (!job.risk) { json(res, 400, { ok: false, error: '这个任务没有风险项，不需要确认' }); return }
+      if (job.risk.needsAck !== true) { json(res, 400, { ok: false, error: '这些风险不在插件市场目录里，没法确认继续' }); return }
+      if (job.status === 'running') { json(res, 409, { ok: false, error: '任务还在跑，等它到风险点再说' }); return }
+      if (job.status !== 'paused') { json(res, 400, { ok: false, error: '这个任务已经收尾了，不能再确认' }); return }
+      // 同一个任务接着跑：复用停下来的那份检测结果，进度从检测点继续，不重新检测
+      const checkpoint = job.checkpoint || null
+      job.checkpoint = null
+      job.status = 'running'
+      job.cancelled = false
+      job.acked = true
+      // 确认过了就不该再吓人：红字（risk）撤掉，只留 status 与进度
+      job.risk = null
+      job.error = ''
+      job.note = checkpoint ? '已确认风险，从检测点继续' : '已确认风险，继续完成'
+      job.pct = Math.min(job.pct || 0, 66)
+      job.finishedAt = ''
+      const source = job.body || { selection: [] }
+      const replay = { selection: source.selection || [], options: { ...(source.options || {}), acknowledge: true } }
+      performPack(replay, job, checkpoint)
+        .then((payload) => finishPackJob(job, payload))
+        .catch((error) => {
+          job.status = 'failed'
+          job.error = String((error && error.message) || error)
+          job.note = '失败'
+          job.finishedAt = new Date().toISOString()
+        })
+      json(res, 200, { ok: true, job: publicJob(job) })
+    })
+
+    route('/dsh-modpack-kit/api/jobs/dismiss', async (req, res) => {
+      if (!needPost(req, res)) return
+      const body = asJson(await readBody(req), {})
+      const id = String(body.id || '')
+      const job = jobs.get(id)
+      if (!job) { json(res, 404, { ok: false, error: '没有这个任务（可能已经删了）' }); return }
+      if (job.status === 'running') { json(res, 400, { ok: false, error: '还在跑，先终止再删' }); return }
+      jobs.delete(id)
+      json(res, 200, { ok: true, removed: id })
+    })
+
+    // 清空进程：删掉所有收尾记录（完成的、失败的、取消的、超上限卡住的都算），
+    // 只有还在跑的与停在风险点等决定的留着。
+    route('/dsh-modpack-kit/api/jobs/clear', async (req, res) => {
+      if (!needPost(req, res)) return
+      const keep = new Set(['running', 'paused'])
+      const removed = []
+      for (const [id, job] of [...jobs.entries()]) {
+        if (keep.has(job.status)) continue
+        jobs.delete(id)
+        removed.push(id)
+      }
+      json(res, 200, { ok: true, removed, jobs: [...jobs.values()].map(publicJob) })
+    })
+
+    route('/dsh-modpack-kit/api/jobs/cancel', async (req, res) => {
+      if (!needPost(req, res)) return
+      const body = asJson(await readBody(req), {})
+      const job = jobs.get(String(body.id || ''))
+      if (!job) { json(res, 404, { ok: false, error: '没有这个任务（可能已完成并过期）' }); return }
+      if (job.status !== 'running') {
+        // 停在风险点的任务：立即停止就是把它标成已停止，不留文件
+        if (job.status === 'paused') {
+          job.checkpoint = null
+          job.status = 'cancelled'
+          job.note = '已停止（未生成文件，本地没有残留）'
+          job.finishedAt = job.finishedAt || new Date().toISOString()
+          json(res, 200, { ok: true, job: publicJob(job) })
           return
         }
-        json(res, 200, { ok: false, error: String((error && error.message) || error) })
+        json(res, 200, { ok: true, already: true, job: publicJob(job) })
+        return
       }
+      job.cancelled = true
+      job.note = '正在停止…'
+      json(res, 200, { ok: true, job: publicJob(job) })
+    })
+
+    route('/dsh-modpack-kit/api/jobs', (req, res) => {
+      if (req.method !== 'GET') { json(res, 405, { ok: false, error: '只支持 GET' }); return }
+      pruneJobs()
+      json(res, 200, { ok: true, jobs: [...jobs.values()].map(publicJob) })
     })
 
     // —— 下载 / 落盘 ——
@@ -466,6 +704,7 @@ export default {
           manifest: inspected.manifest,
           integrity: inspected.integrity,
           scan: inspected.scan,
+          scanGroups: groupFindings(inspected.scan.findings, inspected.manifest.plugins),
           report: inspected.report,
           blockingReasons: inspected.blockingReasons,
           notes: inspected.notes,
@@ -493,7 +732,7 @@ export default {
         const inspected = await inspectInput(body)
         if (inspected.blockingReasons.length > 0 && !options.force) {
           const refused = new InstallRefused(inspected.blockingReasons.join('；'), inspected.scan)
-          json(res, 200, { ok: false, refused: true, error: refused.message, integrity: inspected.integrity, scan: inspected.scan, report: inspected.report })
+          json(res, 200, { ok: false, refused: true, error: refused.message, integrity: inspected.integrity, scan: inspected.scan, scanGroups: groupFindings(inspected.scan.findings, inspected.manifest.plugins), report: inspected.report })
           return
         }
         const result = await installPack({
@@ -519,7 +758,7 @@ export default {
           },
         })
         appendHistory({ at: new Date().toISOString(), kind: 'install', name: inspected.manifest.name, format: inspected.manifest.format, ok: result.ok, pack: inspected.manifest.name, actions: result.actions.length }, config.historyLimit)
-        json(res, 200, { ok: result.ok, ...result, manifest: inspected.manifest, scan: inspected.scan, report: inspected.report, integrity: inspected.integrity })
+        json(res, 200, { ok: result.ok, ...result, manifest: inspected.manifest, scan: inspected.scan, scanGroups: groupFindings(inspected.scan.findings, inspected.manifest.plugins), report: inspected.report, integrity: inspected.integrity })
       } catch (error) {
         json(res, 200, { ok: false, error: String((error && error.message) || error) })
       }

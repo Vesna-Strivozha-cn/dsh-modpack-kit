@@ -201,10 +201,183 @@ await step('设置里能打开「装完直接启用」并回读', async () => {
   assert.equal(off.data.config.enableOnInstall, false, '应能改回 false')
 })
 
+await step('进度窗坐标已从配置里移除（位置改由界面拖动）', async () => {
+  const r = await call('/dsh-modpack-kit/api/settings', { method: 'POST', body: { patch: { dockX: 30, dockY: 40 } } })
+  assert.equal(r.code, 200)
+  assert.equal(r.data.config.dockX, undefined, 'dockX 不该再被接受')
+  assert.equal(r.data.config.dockY, undefined, 'dockY 不该再被接受')
+})
+
 await step('打包前扫描关不掉：设置里写 false 也被拉回 true', async () => {
   const r = await call('/dsh-modpack-kit/api/settings', { method: 'POST', body: { scanBeforePack: false } })
   assert.equal(r.code, 200)
   assert.equal(r.data.config.scanBeforePack, true, '强制项应恒为 true')
+})
+
+await step('异步打包：立即返回任务，/jobs 可查，终止后不留包', async () => {
+  const started = await call('/dsh-modpack-kit/api/pack', {
+    method: 'POST',
+    body: {
+      async: true,
+      selection: [{ name: 'dsh-bili-account-bridge', source: 'profile' }],
+      options: { includePayload: false, name: '异步烟测', confirmLicense: true },
+    },
+  })
+  assert.equal(started.code, 200)
+  assert.equal(started.data.ok, true, started.data.error)
+  assert.equal(started.data.async, true, '异步模式应立即返回')
+  assert.ok(started.data.job && started.data.job.id, '应带任务 id')
+  const jobId = started.data.job.id
+
+  const listed = await call('/dsh-modpack-kit/api/jobs')
+  assert.equal(listed.data.ok, true)
+  assert.ok(listed.data.jobs.some((job) => job.id === jobId), '/jobs 应能看到刚启动的任务')
+
+  const stopped = await call('/dsh-modpack-kit/api/jobs/cancel', { method: 'POST', body: { id: jobId } })
+  assert.equal(stopped.code, 200)
+  assert.ok(['running', 'cancelled', 'done'].includes(stopped.data.job.status))
+
+  let final = null
+  for (let i = 0; i < 80; i++) {
+    const snap = await call('/dsh-modpack-kit/api/jobs')
+    final = snap.data.jobs.find((job) => job.id === jobId)
+    if (!final || final.status !== 'running') break
+    await new Promise((resolve) => setTimeout(resolve, 150))
+  }
+  assert.ok(final, '任务不该消失')
+  assert.ok(['done', 'cancelled', 'failed'].includes(final.status), '任务应已收尾，实际 ' + final.status)
+  if (final.status === 'cancelled') assert.ok(!(final.data && final.data.token), '取消后不应留下可用包')
+})
+
+await step('inspect 返回按来源分组的风险列表', async () => {
+  const r = await call('/dsh-modpack-kit/api/inspect', { method: 'POST', body: { token: globalThis.__token } })
+  assert.equal(r.data.ok, true, r.data.error)
+  assert.ok(Array.isArray(r.data.scanGroups), 'inspect 应带 scanGroups')
+  for (const group of r.data.scanGroups) {
+    assert.equal(typeof group.key, 'string')
+    assert.equal(typeof group.label, 'string')
+    assert.ok(group.counts && typeof group.counts.high === 'number')
+    assert.ok(Array.isArray(group.findings))
+  }
+})
+
+await step('任务收尾后能删掉，删完再查就是 404；没有风险的任务不能「我知道在干什么」', async () => {
+  const started = await call('/dsh-modpack-kit/api/pack', {
+    method: 'POST',
+    body: {
+      async: true,
+      selection: [{ name: 'dsh-bili-account-bridge', source: 'profile' }],
+      options: { includePayload: false, name: '删除烟测', confirmLicense: true },
+    },
+  })
+  assert.equal(started.code, 200, JSON.stringify(started.data))
+  const jobId = started.data.job.id
+  let final = null
+  for (let i = 0; i < 120; i++) {
+    const snap = await call('/dsh-modpack-kit/api/jobs')
+    final = snap.data.jobs.find((job) => job.id === jobId)
+    if (final && final.status !== 'running') break
+    await new Promise((resolve) => setTimeout(resolve, 150))
+  }
+  assert.ok(final, '任务不该消失')
+  assert.equal(final.canDismiss, true, '收尾后应允许删除')
+  assert.equal(final.canAck, false, '没有风险的任务不该给确认按钮')
+  assert.equal(final.risk, null, '没有风险的任务 risk 应为 null')
+
+  const ack = await call('/dsh-modpack-kit/api/jobs/ack', { method: 'POST', body: { id: jobId } })
+  assert.equal(ack.code, 400, '没风险却确认，应被拒')
+
+  const gone = await call('/dsh-modpack-kit/api/jobs/dismiss', { method: 'POST', body: { id: jobId } })
+  assert.equal(gone.data.ok, true, gone.data.error)
+  const after = await call('/dsh-modpack-kit/api/jobs')
+  assert.ok(!after.data.jobs.some((job) => job.id === jobId), '删掉后列表里不该再有它')
+  const again = await call('/dsh-modpack-kit/api/jobs/dismiss', { method: 'POST', body: { id: jobId } })
+  assert.equal(again.code, 404, '重复删除应 404')
+})
+
+await step('跑着的任务不能删，只能先终止', async () => {
+  const started = await call('/dsh-modpack-kit/api/pack', {
+    method: 'POST',
+    body: {
+      async: true,
+      selection: [{ name: 'dsh-bili-account-bridge', source: 'profile' }],
+      options: { includePayload: true, name: '在跑烟测', confirmLicense: true },
+    },
+  })
+  const jobId = started.data.job.id
+  const denied = await call('/dsh-modpack-kit/api/jobs/dismiss', { method: 'POST', body: { id: jobId } })
+  assert.equal(denied.code, 400, '进行中的任务不该被删掉')
+  await call('/dsh-modpack-kit/api/jobs/cancel', { method: 'POST', body: { id: jobId } })
+  for (let i = 0; i < 80; i++) {
+    const snap = await call('/dsh-modpack-kit/api/jobs')
+    const job = snap.data.jobs.find((item) => item.id === jobId)
+    if (!job || job.status !== 'running') break
+    await new Promise((resolve) => setTimeout(resolve, 150))
+  }
+})
+
+await step('清空进程：清掉收尾与失败的，跑着的留着；已完成的任务带可下载 token', async () => {
+  const started = await call('/dsh-modpack-kit/api/pack', {
+    method: 'POST',
+    body: {
+      async: true,
+      selection: [{ name: 'dsh-bili-account-bridge', source: 'profile' }],
+      options: { includePayload: false, name: '清空烟测', confirmLicense: true },
+    },
+  })
+  const jobId = started.data.job.id
+  let final = null
+  for (let i = 0; i < 120; i++) {
+    const snap = await call('/dsh-modpack-kit/api/jobs')
+    final = snap.data.jobs.find((job) => job.id === jobId)
+    if (final && final.status !== 'running') break
+    await new Promise((resolve) => setTimeout(resolve, 150))
+  }
+  assert.equal(final.status, 'done', '轻量包应能打完，实际 ' + final.status + ' ' + (final.error || ''))
+  assert.ok(final.data && final.data.token, '跑完的任务要带 token，进度窗才能给出「下载安装包」')
+
+  const running = await call('/dsh-modpack-kit/api/pack', {
+    method: 'POST',
+    body: {
+      async: true,
+      selection: [{ name: 'dsh-bili-account-bridge', source: 'profile' }],
+      options: { includePayload: true, name: '清空烟测-在跑', confirmLicense: true },
+    },
+  })
+  const runningId = running.data.job.id
+  const cleared = await call('/dsh-modpack-kit/api/jobs/clear', { method: 'POST', body: {} })
+  assert.equal(cleared.data.ok, true, cleared.data.error)
+  assert.ok(cleared.data.removed.includes(jobId), '已完成的应被清掉')
+  const listed = await call('/dsh-modpack-kit/api/jobs')
+  assert.ok(!listed.data.jobs.some((job) => job.id === jobId), '清空后列表里不该再有已完成的')
+  assert.ok(listed.data.jobs.some((job) => job.id === runningId && job.status === 'running'), '跑着的任务不能被清掉')
+  await call('/dsh-modpack-kit/api/jobs/cancel', { method: 'POST', body: { id: runningId } })
+  for (let i = 0; i < 80; i++) {
+    const snap = await call('/dsh-modpack-kit/api/jobs')
+    const job = snap.data.jobs.find((item) => item.id === runningId)
+    if (!job || job.status !== 'running') break
+    await new Promise((resolve) => setTimeout(resolve, 150))
+  }
+
+  // 失败卡住的记录也要能被清掉（比如选了一个本机没有的插件、或超过体积上限）
+  const broken = await call('/dsh-modpack-kit/api/pack', {
+    method: 'POST',
+    body: { async: true, selection: [{ name: 'no-such-plugin-xyz', source: 'profile' }], options: { includePayload: true, confirmLicense: true, name: '失败烟测' } },
+  })
+  const brokenId = broken.data.job.id
+  let brokenJob = null
+  for (let i = 0; i < 80; i++) {
+    const snap = await call('/dsh-modpack-kit/api/jobs')
+    brokenJob = snap.data.jobs.find((job) => job.id === brokenId)
+    if (brokenJob && brokenJob.status !== 'running') break
+    await new Promise((resolve) => setTimeout(resolve, 150))
+  }
+  assert.equal(brokenJob.status, 'failed', '选不存在的插件应判失败，实际 ' + brokenJob.status)
+  assert.ok(brokenJob.error, '失败原因应写进 error，进度窗那一行才能显示为什么卡住')
+  const clearedBroken = await call('/dsh-modpack-kit/api/jobs/clear', { method: 'POST', body: {} })
+  assert.ok(clearedBroken.data.removed.includes(brokenId), '失败卡住的进程也应被清空进程带走')
+  const afterBroken = await call('/dsh-modpack-kit/api/jobs')
+  assert.ok(!afterBroken.data.jobs.some((job) => job.id === brokenId), '清空后不该再有失败进程')
 })
 
 console.log(report.join('\n'))

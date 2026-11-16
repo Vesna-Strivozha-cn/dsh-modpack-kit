@@ -60,6 +60,32 @@ window.__ModuleLoader__.load({
       return () => placement.subs.delete(fn)
     }
 
+    // 打包结果（含下载按钮）放在模块里：切页签、关掉面板都不丢，留到退出程序为止。
+    const packStore = { value: null, subs: new Set() }
+    function readPackValue() {
+      return packStore.value
+    }
+    function setPackValue(value) {
+      const same = (packStore.value || null) === (value || null)
+      packStore.value = value || null
+      if (same) return
+      for (const fn of [...packStore.subs]) { try { fn(packStore.value) } catch (e) { /* 一个订阅出错不该拖垮别的 */ } }
+    }
+    function subscribePack(fn) {
+      packStore.subs.add(fn)
+      return () => packStore.subs.delete(fn)
+    }
+
+    // 点了「清空进程」：打包页上的旧报错、旧的失败结果也一起收掉，别留着当幽灵
+    const clearSignal = { subs: new Set() }
+    function fireClear() {
+      for (const fn of [...clearSignal.subs]) { try { fn() } catch (e) { /* 一个订阅出错不该拖垮别的 */ } }
+    }
+    function subscribeClear(fn) {
+      clearSignal.subs.add(fn)
+      return () => clearSignal.subs.delete(fn)
+    }
+
     async function api(pathname, body) {
       const init = body === undefined ? { headers: { Accept: "application/json" } } : {
         method: "POST",
@@ -141,22 +167,51 @@ window.__ModuleLoader__.load({
       return h("div", { style: { ...box, borderColor: props.tone === "warn" ? "#ffb020" : props.tone === "bad" ? "#ff6b6b" : "var(--dsw-alias-border-l2)", background: "var(--dsw-alias-bg-l2, transparent)", fontSize: "12px", lineHeight: "18px" } }, props.children)
     }
 
+    const ORIGIN_LABEL = { local: "本机", market: "市场", config: "配置", data: "数据", pack: "整合包" }
+
     function ScanReport(props) {
       const scan = props.scan
+      const counts = (scan && scan.counts) || { high: 0, medium: 0, low: 0 }
+      const findings = scan && Array.isArray(scan.findings) ? scan.findings : []
+      const [open, setOpen] = useState(counts.high > 0)
+      const [openGroup, setOpenGroup] = useState({})
       if (!scan) return null
-      const findings = Array.isArray(scan.findings) ? scan.findings : []
-      const counts = scan.counts || { high: 0, medium: 0, low: 0 }
+      const groups = Array.isArray(props.groups) && props.groups.length
+        ? props.groups
+        : (findings.length ? [{ key: "all", label: "全部命中", origin: "", counts, findings }] : [])
+      const toggleGroup = (key) => setOpenGroup((prev) => ({ ...prev, [key]: !prev[key] }))
+      const toggleOpen = () => setOpen((prev) => !prev)
       return h("div", { style: { display: "flex", flexDirection: "column", gap: "8px" } },
         h("div", { style: row },
           h("div", { style: strong }, "安全检测"),
           h(Tag, { color: counts.high ? "#ff6b6b" : counts.medium ? "#ffb020" : "#2bb673" },
             "高 " + counts.high + " · 中 " + counts.medium + " · 低 " + counts.low),
-          h("span", { style: hint }, "扫描 " + (scan.scannedFiles || 0) + " 个文件 / " + bytes(scan.scannedBytes || 0) + (scan.note ? " · " + scan.note : ""))),
-        findings.length
-          ? h("div", { style: { display: "flex", flexDirection: "column", gap: "4px", maxHeight: "190px", overflow: "auto" } },
-            findings.slice(0, 120).map((f, i) => h("div", { key: i, style: { ...mono, color: LEVEL_COLOR[f.severity] || "inherit" } },
-              "[" + String(f.severity || "").toUpperCase() + "] " + (f.label || f.rule) + " · " + f.file + (f.line ? ":" + f.line : "") + " · " + (f.masked || ""))))
-          : h("div", { style: hint }, "没有命中敏感信息或可疑代码规则。"),
+          h("span", { style: hint }, "扫描 " + (scan.scannedFiles || 0) + " 个文件 / " + bytes(scan.scannedBytes || 0) + (scan.note ? " · " + scan.note : "")),
+          findings.length
+            ? h("button", { style: { ...chipBtn, marginLeft: "auto" }, onClick: toggleOpen },
+              open ? "收起风险列表（" + findings.length + " 条）" : "展开风险列表（" + findings.length + " 条）")
+            : null),
+        findings.length === 0 ? h("div", { style: hint }, "没有命中敏感信息或可疑代码规则。") : null,
+        open && findings.length
+          ? h("div", { style: { display: "flex", flexDirection: "column", gap: "6px" } },
+            groups.map((group) => {
+              const expanded = openGroup[group.key] === true
+              return h("div", { key: group.key, style: { border: "0.5px solid var(--dsw-alias-border-l2)", borderRadius: "6px", overflow: "hidden" } },
+                h("div", {
+                  style: { display: "flex", alignItems: "center", gap: "8px", padding: "6px 9px", cursor: "pointer", background: "var(--dsw-alias-bg-l2, transparent)" },
+                  onClick: () => toggleGroup(group.key),
+                },
+                  h("span", { style: { ...label, fontSize: "12.5px" } }, group.label),
+                  group.origin ? h(Tag, null, ORIGIN_LABEL[group.origin] || group.origin) : null,
+                  h("span", { style: hint }, "高 " + group.counts.high + " · 中 " + group.counts.medium + " · 低 " + group.counts.low),
+                  h("span", { style: { ...hint, marginLeft: "auto" } }, expanded ? "收起" : "展开")),
+                expanded
+                  ? h("div", { style: { display: "flex", flexDirection: "column", gap: "3px", padding: "0 9px 8px", maxHeight: "220px", overflow: "auto" } },
+                    group.findings.map((f, i) => h("div", { key: i, style: { ...mono, color: LEVEL_COLOR[f.severity] || "inherit" } },
+                      "[" + String(f.severity || "").toUpperCase() + "] " + (f.label || f.rule) + " · " + f.file + (f.line ? ":" + f.line : "") + " · " + (f.masked || ""))))
+                  : null)
+            }))
+          : null,
         h("div", { style: hint }, props.footNote || "命中内容只在内存里比对，报告只保留类型、位置与掩码，原文不落盘。"))
     }
 
@@ -173,9 +228,264 @@ window.__ModuleLoader__.load({
           f.suggestion ? h("div", { style: hint }, "建议：" + f.suggestion) : null)))
     }
 
+    const JOB_KIND_LABEL = { pack: "打包", install: "安装" }
+    const JOB_STATUS_TEXT = { running: "进行中", paused: "等决定", acked: "已确认", done: "完成", failed: "失败", cancelled: "已取消" }
+
+    function useJobs(intervalMs) {
+      const [jobs, setJobs] = useState([])
+      useEffect(() => {
+        let alive = true
+        const load = async () => {
+          try {
+            const res = await fetch(API + "/jobs")
+            if (!res.ok) return
+            const data = await res.json()
+            if (alive && data && Array.isArray(data.jobs)) setJobs(data.jobs)
+          } catch { /* 轮询失败不该打断界面，下一次再试 */ }
+        }
+        load()
+        const timer = setInterval(load, intervalMs || 900)
+        return () => { alive = false; clearInterval(timer) }
+      }, [intervalMs])
+      return jobs
+    }
+
+    function ProgressBar(props) {
+      const pct = Math.max(0, Math.min(100, Math.round(props.pct || 0)))
+      return h("div", { style: { height: "6px", borderRadius: "99px", background: "rgba(127,163,245,.18)", overflow: "hidden" } },
+        h("div", { style: { width: pct + "%", height: "100%", borderRadius: "99px", transition: "width .25s ease", background: props.tone || "linear-gradient(90deg,#7FA3F5,#4C7DF0)" } }))
+    }
+
+    // 进度窗：可以拖，拖过的位置记在浏览器本地；没有任务时自动收起，只留一枚唤出按钮。
+    const DOCK_POS_KEY = "dsh-modpack-kit:dock-pos"
+    function readDockPos() {
+      try {
+        const raw = typeof localStorage !== "undefined" ? localStorage.getItem(DOCK_POS_KEY) : null
+        if (!raw) return null
+        const parsed = JSON.parse(raw)
+        if (!parsed || typeof parsed !== "object") return null
+        if (!Number.isFinite(Number(parsed.x)) || !Number.isFinite(Number(parsed.y))) return null
+        return { x: Math.max(0, Math.round(Number(parsed.x))), y: Math.max(0, Math.round(Number(parsed.y))) }
+      } catch { return null }
+    }
+    function writeDockPos(pos) {
+      try { if (typeof localStorage !== "undefined" && pos) localStorage.setItem(DOCK_POS_KEY, JSON.stringify(pos)) } catch { /* 存不了就算了，不影响本场使用 */ }
+    }
+    function viewportSize() {
+      const width = typeof window !== "undefined" && Number(window.innerWidth) ? Number(window.innerWidth) : 1280
+      const height = typeof window !== "undefined" && Number(window.innerHeight) ? Number(window.innerHeight) : 800
+      return { width, height }
+    }
+
+    function JobDock(props) {
+      const jobs = Array.isArray(props.jobs) ? props.jobs : []
+      const [pos, setPos] = useState(readDockPos())
+      const [pinned, setPinned] = useState(false)     // 手动唤出：没有任务时也显示
+      const [hidden, setHidden] = useState(false)     // 手动收起：连进行中的也先藏起来
+      const [open, setOpen] = useState(false)
+      const [dockMsg, setDockMsg] = useState("")
+      const dragRef = useRef(null)
+      const boxRef = useRef(null)
+      const running = jobs.filter((job) => job.status === "running")
+      const visible = !hidden && (pinned || running.length > 0)
+
+      // 有任务开跑就自己冒出来（之前手动收起的也一并放出来）
+      useEffect(() => {
+        if (running.length > 0) { setHidden(false) }
+      }, [running.length])
+
+      const startDrag = (event) => {
+        if (!event || typeof event.clientX !== "number") return
+        const el = boxRef.current
+        const rect = el && el.getBoundingClientRect ? el.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 }
+        dragRef.current = {
+          dx: event.clientX - rect.left,
+          dy: event.clientY - rect.top,
+          width: rect.width,
+          height: rect.height,
+          startX: rect.left,
+          startY: rect.top,
+          moved: false,
+          last: null,
+        }
+        if (event.currentTarget && event.currentTarget.setPointerCapture && event.pointerId !== undefined) {
+          try { event.currentTarget.setPointerCapture(event.pointerId) } catch { /* 某些环境不支持捕获，照样能拖 */ }
+        }
+      }
+      const moveDrag = (event) => {
+        const drag = dragRef.current
+        if (!drag || !event || typeof event.clientX !== "number") return
+        const { width, height } = viewportSize()
+        const left = Math.min(Math.max(4, event.clientX - drag.dx), Math.max(4, width - drag.width - 4))
+        const top = Math.min(Math.max(4, event.clientY - drag.dy), Math.max(4, height - drag.height - 4))
+        if (Math.abs(left - drag.startX) > 3 || Math.abs(top - drag.startY) > 3) drag.moved = true
+        drag.last = { x: Math.round(left), y: Math.round(top) }
+        setPos(drag.last)
+      }
+      const endDrag = () => {
+        const drag = dragRef.current
+        if (!drag) return
+        dragRef.current = null
+        if (drag.moved) {
+          if (drag.last) writeDockPos(drag.last)
+          return
+        }
+        // 没拖动就是点了一下标题：展开 / 收起
+        setOpen((prev) => !prev)
+      }
+
+      if (!visible) {
+        const anchor = pos || null
+        const summonStyle = {
+          position: "fixed",
+          zIndex: 70,
+          display: "flex",
+          alignItems: "center",
+          gap: "6px",
+          padding: "7px 11px",
+          borderRadius: "999px",
+          border: "0.5px solid var(--dsw-alias-border-l2)",
+          background: "var(--dsw-alias-surface-1, rgba(24,26,31,.97))",
+          color: "var(--dsw-alias-label-primary)",
+          boxShadow: "0 6px 18px rgba(0,0,0,.28)",
+          cursor: "pointer",
+          fontSize: "12px",
+          ...(anchor ? { left: anchor.x + "px", top: anchor.y + "px" } : { right: "16px", bottom: "16px" }),
+        }
+        const badge = running.length || jobs.length
+        return h("button", { style: summonStyle, title: "打开整合包进度窗", onClick: () => { setPinned(true); setHidden(false) } },
+          h("span", { style: { width: "7px", height: "7px", borderRadius: "99px", background: running.length ? "#4C7DF0" : "rgba(127,163,245,.5)" } }),
+          "进度",
+          badge ? h("span", { style: { ...hint, marginLeft: "0", fontVariantNumeric: "tabular-nums" } }, String(badge)) : null)
+      }
+
+      const current = running[0] || jobs[0] || null
+      const headText = current
+        ? (running.length ? (current.note || "处理中") : (JOB_STATUS_TEXT[current.status] || "打包记录"))
+        : "还没有任务"
+      const headPct = current ? Math.round(current.status === "done" ? 100 : (current.pct || 0)) : 0
+      const stop = async (id) => {
+        try { await api("/jobs/cancel", { id }) } catch { /* 已经结束就忽略 */ }
+      }
+      const ack = async (id) => {
+        try { await api("/jobs/ack", { id }) } catch (error) { setDockMsg((error && error.message) || "确认失败") }
+      }
+      const dismiss = async (id) => {
+        try { await api("/jobs/dismiss", { id }) } catch (error) { setDockMsg((error && error.message) || "删除失败") }
+      }
+      const clearDone = async () => {
+        // 先试一次服务端的批量清空；老宿主上没有这个路由时，退回逐个删
+        try {
+          const data = await api("/jobs/clear", {})
+          setDockMsg(data && data.removed && data.removed.length ? "" : "没有可清空的进程")
+          fireClear()
+          return
+        } catch (error) {
+          const targets = jobs.filter((job) => job.status !== "running" && job.status !== "paused")
+          if (targets.length === 0) { setDockMsg((error && error.message) || "清空进程失败"); return }
+          let bad = 0
+          for (const job of targets) {
+            try { await api("/jobs/dismiss", { id: job.id }) } catch { bad += 1 }
+          }
+          fireClear()
+          setDockMsg(bad ? ("有 " + bad + " 条没删掉（可能还在跑），其余已清") : "")
+        }
+      }
+      // 只要有一条不是「在跑」或「停在风险点」，就给清空入口（状态再怪也算收尾）
+      const finished = jobs.filter((job) => job.status !== "running" && job.status !== "paused")
+
+      return h("div", {
+        ref: boxRef,
+        style: {
+          position: "fixed",
+          zIndex: 70,
+          ...(pos ? { left: pos.x + "px", top: pos.y + "px" } : { right: "16px", bottom: "16px" }),
+          width: open ? "380px" : "288px",
+          maxHeight: open ? "58vh" : "none",
+          overflow: "auto",
+          boxSizing: "border-box",
+          padding: "10px 12px",
+          borderRadius: "10px",
+          border: "0.5px solid var(--dsw-alias-border-l2)",
+          background: "var(--dsw-alias-surface-1, rgba(24,26,31,.97))",
+          boxShadow: "0 10px 30px rgba(0,0,0,.35)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "7px",
+        },
+      },
+        h("div", {
+          style: { display: "flex", alignItems: "center", gap: "8px", cursor: "grab", userSelect: "none", touchAction: "none" },
+          title: "按住可以拖动；点一下展开或收起",
+          onPointerDown: startDrag,
+          onPointerMove: moveDrag,
+          onPointerUp: endDrag,
+          onPointerCancel: endDrag,
+        },
+          h("span", { style: { fontSize: "12px", color: "var(--dsw-alias-label-secondary, #b6bac3)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, headText),
+          h("span", { style: { marginLeft: "auto", fontSize: "12px", fontVariantNumeric: "tabular-nums" } }, headPct + "%"),
+          running.length > 1 ? h("span", { style: { ...hint, marginLeft: "0" } }, "+" + (running.length - 1)) : null,
+          finished.length
+            ? h("button", {
+              style: { ...chipBtn, marginLeft: "2px", padding: "0 6px", lineHeight: "18px" },
+              title: "清掉所有收尾与失败的进程（跑着的和停在风险点的留着）",
+              onClick: (event) => { if (event && event.stopPropagation) event.stopPropagation(); clearDone() },
+            }, "清空进程")
+            : null,
+          h("button", {
+            style: { ...chipBtn, marginLeft: "2px", padding: "0 6px", lineHeight: "18px" },
+            title: "收起（有任务时还会再冒出来）",
+            onClick: (event) => { if (event && event.stopPropagation) event.stopPropagation(); setHidden(true); setPinned(false) },
+          }, "收起")),
+        current ? h(ProgressBar, { pct: headPct, tone: current.status === "failed" ? "#ff6b6b" : current.status === "cancelled" ? "#8b8f99" : undefined }) : null,
+        open
+          ? (jobs.length === 0
+            ? h("div", { style: hint }, "还没有打包或安装任务。开始一个就会出现在这里。")
+            : h("div", { style: { display: "flex", flexDirection: "column", gap: "8px", marginTop: "2px" } },
+              jobs.map((job) => h("div", { key: job.id, style: { display: "flex", flexDirection: "column", gap: "4px", paddingTop: "7px", borderTop: "0.5px solid var(--dsw-alias-border-l2)" } },
+                h("div", { style: row },
+                  h("span", { style: { ...label, fontSize: "12.5px" } }, job.label || JOB_KIND_LABEL[job.kind] || "任务"),
+                  h("span", { style: { ...hint, marginLeft: "auto" } }, (JOB_STATUS_TEXT[job.status] || job.status) + " · " + Math.round(job.pct || 0) + "%")),
+                h("div", { style: hint }, job.note || ""),
+                job.risk && job.status === "paused"
+                  ? h("div", { style: { ...hint, color: "#ff9b9b", display: "flex", flexDirection: "column", gap: "2px" } },
+                    h("div", null, "检测到风险：高 " + (job.risk.high || 0) + " · 中 " + (job.risk.medium || 0) + " · 低 " + (job.risk.low || 0)),
+                    h("div", { style: { fontSize: "10.5px" } }, job.risk.message || ""),
+                    job.risk.groups && job.risk.groups.length
+                      ? h("div", { style: { fontSize: "10.5px" } },
+                        job.risk.groups.map((g) => (g.label || "") + "（高 " + ((g.counts && g.counts.high) || 0) + " / 中 " + ((g.counts && g.counts.medium) || 0) + "）").join("　"))
+                      : null)
+                  : null,
+                h(ProgressBar, { pct: job.pct, tone: job.status === "failed" || job.status === "paused" ? "#ff6b6b" : job.status === "cancelled" ? "#8b8f99" : undefined }),
+                h("div", { style: { display: "flex", flexWrap: "wrap", gap: "6px" } },
+                  job.status === "running" ? h("button", { style: { ...chipBtn }, onClick: () => stop(job.id) }, "终止") : null,
+                  job.status === "done" && job.kind === "pack" && job.data && job.data.token
+                    ? h("button", {
+                      style: { ...chipBtn, color: "#4C7DF0", borderColor: "#4C7DF0" },
+                      title: "跳到打包页的下载部分",
+                      onClick: () => { if (typeof props.onOpenResult === "function") props.onOpenResult(job) },
+                    }, "下载安装包")
+                    : null,
+                  job.canAck
+                    ? h("button", { style: { ...chipBtn, color: "#ff6b6b", borderColor: "#ff6b6b" }, title: "忽略风险，在同一个任务里接着跑完", onClick: () => ack(job.id) }, "我知道在干什么")
+                    : null,
+                  job.canDismiss
+                    ? h("button", { style: { ...chipBtn, color: "var(--dsw-alias-label-tertiary, #8b8f99)" }, title: "从列表里删掉这条记录", onClick: () => dismiss(job.id) }, "删除该进程")
+                    : null,
+                  job.error && job.status !== "paused" ? h("span", { style: { ...hint, color: "#ff6b6b" } }, job.error) : null)))))
+          : h("div", { style: { ...hint, fontSize: "10.5px" } },
+            (running.length ? running.length + " 个任务进行中 · " : "") + "按住标题能拖动，点标题展开看详情、也能中途终止"),
+        dockMsg
+          ? h("div", { style: { ...hint, fontSize: "10.5px", color: "#ff6b6b", display: "flex", gap: "6px", alignItems: "center" } },
+            dockMsg,
+            h("button", { style: { ...chipBtn, marginLeft: "auto" }, onClick: () => setDockMsg("") }, "知道了"))
+          : null)
+    }
+
     // —— 打包 ——
     function PackPanel(props) {
       const status = props.status
+      const jobs = Array.isArray(props.jobs) ? props.jobs : []
       const pageSize = (status && status.config && status.config.catalogPageSize) || 20
       const [installed, setInstalled] = useState((status && status.installed) || [])
       const [marketInfo, setMarketInfo] = useState({})   // name -> 市场同名条目（标题/版本/分类）
@@ -197,9 +507,15 @@ window.__ModuleLoader__.load({
         author: "",
       })
       const [busy, setBusy] = useState("")
-      const [result, setResult] = useState(null)
+      // 结果由 Home 保管（模块级缓存），切页签回来仍然在
+      const result = props.result === undefined ? null : props.result
+      const setResult = typeof props.setResult === "function" ? props.setResult : () => {}
+      const [started, setStarted] = useState("")
+      const [seenJobs, setSeenJobs] = useState({})
+      const [mountAt] = useState(() => Date.now())
       const [error, setError] = useState("")
       const [packNag, firePackNag] = useNag()
+      const resultRef = useRef(null)
 
       const active = query.trim() !== "" || category !== "all"
 
@@ -346,17 +662,69 @@ window.__ModuleLoader__.load({
       })
       const clearSelected = () => setSelected({})
 
+      const [jobMsg, setJobMsg] = useState("")
+      const pausedJobs = (props.jobs || []).filter((job) => job.kind === "pack" && job.status === "paused" && job.risk)
+
+      const ackJob = async (id) => {
+        setJobMsg("")
+        try {
+          const data = await api("/jobs/ack", { id })
+          if (!data || !data.ok) setJobMsg((data && data.error) || "确认失败")
+        } catch (e) { setJobMsg(String((e && e.message) || e)) }
+      }
+      // 停在风险点的任务：按插件分栏列出命中项，确认/删除都在这里做
+      const pausedRiskNodes = []
+      if (pausedJobs.length > 0) {
+        pausedRiskNodes.push(h("div", { key: "title", style: { ...strong, color: "#ff6b6b" } }, "打包停在风险点（" + pausedJobs.length + " 个任务）"))
+        pausedRiskNodes.push(h("div", { key: "hint", style: hint }, "下面是每个插件自己的命中项。确认后原任务从这个检测点接着跑完，不再重复检测。"))
+        for (const job of pausedJobs) {
+          const groupNodes = (job.risk.groups || []).map((group, index) => {
+            const sampleNodes = (group.samples || []).map((sample, i) => h("div", {
+              key: i,
+              style: { color: LEVEL_COLOR[sample.severity] || "inherit" },
+            }, "· " + (sample.label || "") + "　" + (sample.file || "") + (sample.line ? ":" + sample.line : "")))
+            return h("div", {
+              key: index,
+              style: { ...box, padding: "8px 10px", background: "transparent", display: "flex", flexDirection: "column", gap: "4px" },
+            },
+            h("div", { style: row },
+              h(Tag, null, group.plugin || group.label),
+              h("span", { style: hint }, ORIGIN_LABEL[group.origin] || group.origin || ""),
+              h("span", { style: hint }, "高 " + ((group.counts && group.counts.high) || 0) + " · 中 " + ((group.counts && group.counts.medium) || 0) + " · 低 " + ((group.counts && group.counts.low) || 0))),
+            sampleNodes.length > 0
+              ? h("div", { style: { ...mono, display: "flex", flexDirection: "column", gap: "2px" } }, sampleNodes)
+              : h("div", { style: hint }, "命中详情写进了包内 security/report.txt。"))
+          })
+          pausedRiskNodes.push(h("div", { key: job.id, style: { display: "flex", flexDirection: "column", gap: "6px" } },
+            h("div", { style: { ...row, justifyContent: "space-between" } },
+              h("div", { style: strong }, job.label || "打包任务"),
+              h("div", { style: row },
+                h("button", { style: { ...btn, borderColor: "#ff6b6b", color: "#ff6b6b" }, onClick: () => ackJob(job.id) }, "我知道在干什么"),
+                h("button", { style: btn, onClick: () => dismissJob(job.id) }, "删除该进程"))),
+            groupNodes))
+        }
+        pausedRiskNodes.push(h("div", { key: "msg", style: hint }, jobMsg))
+      }
+
+      const dismissJob = async (id) => {
+        setJobMsg("")
+        try {
+          const data = await api("/jobs/dismiss", { id })
+          if (!data || !data.ok) setJobMsg((data && data.error) || "删除失败")
+        } catch (e) { setJobMsg(String((e && e.message) || e)) }
+      }
+
       const doPack = async (ack) => {
-        setBusy("pack"); setError(""); setResult(null)
+        setError(""); setStarted(""); setBusy("start")
         try {
           const data = await api("/pack", {
+            async: true,
             selection: picked.map((name) => selected[name]),
             options: {
               includePayload: options.includePayload,
               includeConfig: options.includeConfig,
               acknowledge: ack === true,
               force: false,
-              scanBeforePack: options.scanBeforePack,
               confirmLicense: options.confirmLicense,
               name: options.name,
               description: options.description,
@@ -364,15 +732,43 @@ window.__ModuleLoader__.load({
             },
           })
           if (!data) { setError("没有响应"); return }
-          if (!data.ok) {
-            setResult({ refused: data.refused, needsAck: data.needsAck === true, trustedOnly: data.trustedOnly === true, error: data.error, scan: data.scan })
-            return
-          }
-          setResult(data)
+          if (!data.ok) { setError(data.error || "打包请求被拒绝"); return }
+          setStarted((data.job && data.job.label) || "打包任务")
         } catch (e) {
           setError(String((e && e.message) || e))
         } finally { setBusy("") }
       }
+
+      // 后台任务完成后，把结果搬回这一页（可以同时打好几个包）
+      useEffect(() => {
+        const finished = (props.jobs || []).filter((job) => job.kind === "pack" && job.status !== "running" && job.data && Date.parse(job.startedAt) >= mountAt)
+        const fresh = finished.filter((job) => !seenJobs[job.id])
+        if (fresh.length === 0) return
+        const nextSeen = { ...seenJobs }
+        for (const job of fresh) nextSeen[job.id] = true
+        setSeenJobs(nextSeen)
+        const payload = fresh[fresh.length - 1].data
+        if (payload && payload.ok) setResult(payload)
+        else if (payload && payload.refused) setResult({ refused: true, needsAck: payload.needsAck === true, trustedOnly: payload.trustedOnly === true, error: payload.error, scan: payload.scan, scanGroups: payload.scanGroups })
+        else if (payload && payload.cancelled) { setResult(null); setError(payload.error || "已取消") }
+        else { setResult(null); setError((payload && payload.error) || "打包失败，详情见左下角") }
+      }, [props.jobs])
+
+      // 从进度窗点「下载安装包」跳过来：滚到结果那一块
+      useEffect(() => {
+        if (!props.focus) return
+        const el = resultRef.current
+        if (el && typeof el.scrollIntoView === "function") {
+          try { el.scrollIntoView({ block: "start", behavior: "smooth" }) } catch { /* 老浏览器不支持行为参数，忽略 */ }
+        }
+      }, [props.focus])
+
+      // 「清空进程」之后，打包页上的旧报错与失败结果也一起收掉
+      useEffect(() => subscribeClear(() => {
+        setError("")
+        const current = props.result
+        if (current && (current.refused || current.error)) setResult(null)
+      }), [props.result])
 
       const downloadPack = async () => {
         if (!result || !result.token) return
@@ -484,25 +880,27 @@ window.__ModuleLoader__.load({
           h("input", { style: { ...input, width: "100%" }, placeholder: "一句话描述（可空）", value: options.description, onChange: (e) => setOptions({ ...options, description: e.target.value }) }),
           h(Switch, { checked: options.confirmLicense, label: "我确认所选插件的许可证允许再分发，或已获得作者授权", onChange: (v) => setOptions({ ...options, confirmLicense: v }) }),
           h("div", { style: row },
-            h("button", { style: btnPrimary, disabled: picked.length === 0 || busy === "pack", onClick: doPack }, busy === "pack" ? "打包中…" : ("打包 " + picked.length + " 个插件")),
+            h("button", { style: btnPrimary, disabled: picked.length === 0 || busy === "start", onClick: doPack }, busy === "start" ? "提交中…" : ("打包 " + picked.length + " 个插件")),
+            started ? h("span", { style: hint }, "已开始：" + started + "（进度在左下角，可以接着选别的再打一个）") : null,
             status ? h("span", { style: hint }, "DSH " + (status.dshVersion || "?") + " · profile " + status.profile) : null)),
+        pausedRiskNodes.length ? h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "10px", borderColor: "#d9534f" } }, pausedRiskNodes) : null,
         error ? h(Notice, { tone: "bad" }, error) : null,
-        result ? h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "10px" } },
+        result ? h("div", { ref: resultRef, style: { ...box, display: "flex", flexDirection: "column", gap: "10px" } },
           result.refused || result.error
             ? h(Notice, { tone: "warn" },
               h("b", null, "已停止："), result.error || "未通过检查",
               result.needsAck ? h("div", { style: { ...row, marginTop: "8px" } },
                 h("button", {
                   style: { ...btn, borderColor: "#ff6b6b", color: "#ff6b6b" },
-                  disabled: busy === "pack",
+                  disabled: busy === "start",
                   onClick: () => doPack(true),
-                }, busy === "pack" ? "处理中…" : "我已知晓其中风险，继续打包")) : null)
+                }, busy === "start" ? "提交中…" : "我已知晓其中风险，继续打包")) : null)
             : h("div", { style: row },
               h("div", { style: strong }, result.fileName),
               h(Tag, { color: "#2bb673" }, bytes(result.size)),
               h(Tag, null, FORMAT_TEXT[result.manifest && result.manifest.format] || ""),
               h("span", { style: hint }, "包内插件 " + ((result.manifest && result.manifest.plugins) || []).length + " 个")),
-          result.scan ? h(ScanReport, { scan: result.scan, footNote: "报告已写进包内 security/report.txt（只含类型与掩码）。" }) : null,
+          result.scan ? h(ScanReport, { scan: result.scan, groups: result.scanGroups, footNote: "报告已写进包内 security/report.txt（只含类型与掩码）。" }) : null,
           result.manifest && result.manifest.plugins && result.manifest.plugins.length
             ? h("div", { style: { display: "flex", flexDirection: "column", gap: "2px" } },
               result.manifest.plugins.map((p) => h("div", { key: p.name, style: mono },
@@ -607,7 +1005,7 @@ window.__ModuleLoader__.load({
           h("div", { style: { display: "flex", flexDirection: "column", gap: "2px" } },
             preview.manifest.plugins.map((p) => h("div", { key: p.name, style: mono },
               "· " + p.name + "@" + p.version + (p.localEdits ? "　[含本机修改]" : "") + (p.configIncluded ? "　[有配置]" : "") + (p.dataIncluded ? "　[有数据快照]" : "")))),
-          h(ScanReport, { scan: preview.scan }),
+          h(ScanReport, { scan: preview.scan, groups: preview.scanGroups }),
           h(CompatList, { compat: preview.compat }),
           preview.notes && preview.notes.length ? h("div", { style: hint }, preview.notes.map((n, i) => h("div", { key: i }, "· " + n))) : null,
           h("div", { style: row },
@@ -623,7 +1021,7 @@ window.__ModuleLoader__.load({
             (a.ok ? "✓ " : "✗ ") + a.plugin + " · " + a.action + " · " + a.message)),
           (done.lines || []).length ? h("details", null, h("summary", { style: hint }, "命令输出（" + done.lines.length + " 行）"),
             h("pre", { style: { ...mono, maxHeight: "200px", overflow: "auto", whiteSpace: "pre-wrap" } }, done.lines.join("\n"))) : null,
-          done.scan ? h(ScanReport, { scan: done.scan }) : null)
+          done.scan ? h(ScanReport, { scan: done.scan, groups: done.scanGroups }) : null)
           : null)
     }
 
@@ -740,7 +1138,23 @@ window.__ModuleLoader__.load({
 
     function Home(props) {
       const [tab, setTab] = useState("pack")
+      const jobs = useJobs()
       const status = props.status
+      const [packResult, setPackResult] = useState(() => readPackValue())
+      const [focus, setFocus] = useState(0)
+      useEffect(() => subscribePack((value) => { setPackResult(value) }), [])
+      const savePackResult = (value) => {
+        setPackValue(value)
+        setPackResult(value)
+      }
+      // 进度窗里点「下载安装包」→ 切到打包页、把那次的结果放进去、滚到下载那一块
+      const openResult = (job) => {
+        const payload = job && job.data ? job.data : null
+        if (!payload) return
+        savePackResult(payload)
+        setTab("pack")
+        setFocus((n) => n + 1)
+      }
       const tabs = [
         ["pack", "打包"],
         ["install", "安装 / 导入"],
@@ -765,10 +1179,11 @@ window.__ModuleLoader__.load({
           h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)),
             h("span", { style: { ...hint, marginLeft: "auto" } },
               status ? ("DSH " + (status.dshVersion || "?") + " · 已装 " + ((status.installed || []).length) + " 个 · v" + (status.pluginVersion || "?")) : "读取环境…")),
-          tab === "pack" ? h(PackPanel, { status }) : null,
+          tab === "pack" ? h(PackPanel, { status, jobs, result: packResult, setResult: savePackResult, focus }) : null,
           tab === "install" ? h(InstallPanel, { status }) : null,
           tab === "settings" ? h(SettingsPanel, { status }) : null,
-          h("div", { style: hint }, "说明：整合包只打包你选择的插件与必要配置。打包与安装安全检测在内存中进行，命中原文不落盘；请遵守插件作者许可证与你所在地区的法律法规。"))
+          h("div", { style: hint }, "说明：整合包只打包你选择的插件与必要配置。打包与安装安全检测在内存中进行，命中原文不落盘；请遵守插件作者许可证与你所在地区的法律法规。")),
+        h(JobDock, { jobs, onOpenResult: openResult })
       )
     }
 
