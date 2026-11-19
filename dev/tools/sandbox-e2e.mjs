@@ -21,7 +21,7 @@ const fail = (msg) => { throw new Error(msg) }
 const base = loadConfig()
 const realProfile = pathsFor(base).profile
 const PREFERRED = ['dsh-whale-widget', 'dsh-theme-endfield', 'dsh-plugin-memory', 'dsh-context']
-const pool = listInstalled(realProfile).filter((p) => p.isPlugin && p.name !== 'dsh-modpack-kit')
+const pool = listInstalled(realProfile).filter((p) => p.isPlugin && p.isDirect && p.name !== 'dsh-modpack-kit')
 if (pool.length === 0) fail('profile 里没有可用来打包的插件')
 const pick = pool.find((p) => PREFERRED.includes(p.name)) || pool[0]
 log(`挑中：${pick.name}@${pick.version}（${pick.dir}）`)
