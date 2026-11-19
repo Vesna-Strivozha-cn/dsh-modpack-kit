@@ -730,7 +730,9 @@ window.__ModuleLoader__.load({
 
       const picked = Object.keys(selected)
       // 市场里没装的插件也能打包：走 npm 源（安装时由市场按版本取包）
-      const entrySource = (entry) => (entry.installed === false ? "npm" : "profile")
+      // 本机已装、但市场里有同名条目的，默认也走市场版：避免把本地开发版打进包、装到别人机器上
+      const entrySource = (entry) => (entry.installed === false || entry.hasMarket ? "npm" : "profile")
+      const entrySpec = (entry) => (entry.hasMarket ? entry.marketVersion || entry.version || "" : entry.version || "")
       const toggle = (entry) => {
         setSelected((prev) => {
           const next = { ...prev }
@@ -738,7 +740,7 @@ window.__ModuleLoader__.load({
           else next[entry.name] = {
             name: entry.name,
             source: entrySource(entry),
-            spec: entry.version || "",
+            spec: entrySpec(entry),
             mode: "base",
           }
           return next
@@ -753,14 +755,14 @@ window.__ModuleLoader__.load({
           ...prev,
           [entry.name]: toMarket
             ? { name: entry.name, source: "npm", spec: entry.marketVersion || "", mode: "base" }
-            : { name: entry.name, source: "profile", spec: entry.version || "", mode: "base" },
+            : { name: entry.name, source: "profile", spec: entry.version || "", mode: "local" },
         }
       })
 
       const addAllLocal = () => setSelected((prev) => {
         const next = { ...prev }
         for (const entry of localRows) {
-          if (!next[entry.name]) next[entry.name] = { name: entry.name, source: "profile", spec: entry.version || "", mode: "base" }
+          if (!next[entry.name]) next[entry.name] = { name: entry.name, source: entrySource(entry), spec: entrySpec(entry), mode: "base" }
         }
         return next
       })
@@ -947,7 +949,7 @@ window.__ModuleLoader__.load({
                 h("div", { style: { flex: "1 1 220px", minWidth: "180px" } },
                   h("div", { style: label }, entry.title || entry.name, " ", h("span", { style: hint }, "@" + (entry.version || "?"))),
                   h("div", { style: hint }, (entry.description || "").slice(0, 110))),
-                h("span", { style: chip }, entry.installed === false ? "市场 · 未装" : "本机"),
+                h("span", { style: chip }, entry.installed === false ? "市场 · 未装" : (entry.hasMarket ? "已安装" : "本机")),
                 h("span", { style: { ...chip, color: "var(--dsw-alias-label-tertiary)" } }, labelOf(categoryOf(entry))),
                 entry.updateAvailable ? h(Tag, { color: "#2bb673" }, "市场版 " + (entry.marketVersion || entry.version) + " 更新") : null,
                 on ? h("input", {
@@ -969,7 +971,7 @@ window.__ModuleLoader__.load({
             h("button", { style: btn, disabled: searching, onClick: loadMore }, searching ? "加载中…" : ("加载更多（还有 " + Math.max(0, search.total - rows.length) + " 条）"))) : null,
           h("div", { style: hint }, active
             ? "排序：已装的排前面，其余按插件市场的相关度与目录顺序。分类和词条都来自插件市场目录。"
-            : "首屏只列本机已装。搜索或点分类才会去插件市场目录里查，服务端分页、一次一页。搜索结果里没装的插件也能直接勾选——打包时按版本从插件市场取包，装的时候同样从市场下载。")
+            : "首屏只列本机已装。插件自带的内部组件（随父包一起装的那种）不单独列出" + (props.status && props.status.installedHidden ? "（本次隐藏 " + props.status.installedHidden + " 个）" : "") + "。本机已装且市场里有同名条目的，勾选时默认按市场版打包（不打本地开发版）；要打本机那份就点「（切回本机版）」，切回去默认按「本地改动」打（本机版通常带着自己的配置或改动）。搜索或点分类才去插件市场目录里查，服务端分页、一次一页。搜索结果里没装的插件也能直接勾选——打包时按版本从插件市场取包，装的时候同样从市场下载。")
         ),
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
           h("div", { style: strong }, "包选项"),
