@@ -23,7 +23,7 @@ for (const i of items) counts.set(i.category, (counts.get(i.category) || 0) + 1)
 console.log('目录条数:', items.length)
 for (const c of CATEGORIES) if (counts.get(c.id)) console.log('  ' + c.label.padEnd(8) + counts.get(c.id))
 
-const installed = installedAll.filter((p) => p.isPlugin)
+const installed = installedAll.filter((p) => p.isPlugin && p.isDirect)
 const byName = new Map(items.map((i) => [i.name, i]))
 console.log('\n本机已装插件:', installed.length)
 for (const p of installed) {
