@@ -1,6 +1,6 @@
 url: https://github.com/Vesna-Strivozha-cn/dsh-modpack-kit
 name: Vesna-Strivozha-cn/dsh-modpack-kit
-category: market
+category: tools
 description:
   en: Provides HMCL/PCL-launcher-style modpack packaging and installation for DeepSeek Harness. Bundle several plugins with their configuration and data into one .dshpack and install it in a single pass, in two forms: a self-contained full pack that a machine with only DSH installed can install, and a lite pack that records names and versions and fetches them on install. Each plugin can be packed from its upstream release with default configuration or from a local copy; configuration is re-applied by entry and data is restored without overwriting existing files. Packing always runs an in-memory scan for secrets and risky code; high-risk hits pause the job until confirmed, then it resumes from the checkpoint. Categories, search, paging and entries come from the plugin-market catalog, and market versions are preferred when online. The UI can live in settings, the sidebar or the plugins tab.
   zh: 为 DeepSeek Harness 提供类似 HMCL / PCL 这类我的世界启动器的整合包打包与安装：把多个插件连同配置与数据打成一个 .dshpack 一次装好，支持懒人包（完整包，目标机器只装 DSH 本体即可安装）与轻量包（只记录插件名与版本，安装时按记录取包）两种形态；支持按插件逐个定制打包内容（基础配置或本地改动），配置按原结构回填、数据写回且默认不覆盖已有文件。打包前强制做敏感信息与风险代码静态检测，高风险停在「等决定」，确认后从检测点续跑、不重复扫描；分类、搜索、分页与条目与插件市场目录同源，联网时可优先按市场版本安装；设置页、侧边栏、插件页三处入口各自独立开关。
