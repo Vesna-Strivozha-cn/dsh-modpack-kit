@@ -169,6 +169,12 @@ function readDependencies() {
 const installedBefore = readDependencies()
 
 for (const plugin of manifest.plugins || []) {
+  if (plugin.transitiveOf) {
+    // 父包会把它带进来：单独装一遍只会重复
+    results.push({ plugin, ok: true, skipped: true, message: '是「' + plugin.transitiveOf + '」的内部组件，随父包一起安装' })
+    say('跳过 ' + plugin.name + '：它是「' + plugin.transitiveOf + '」的内部组件，父包会一起装上')
+    continue
+  }
   const already = installedBefore[plugin.name]
   if (already && !replaceExisting) {
     // 需求：先跳过已装的，其余照装；装完再告诉用户怎么换
@@ -177,7 +183,7 @@ for (const plugin of manifest.plugins || []) {
     say('跳过 ' + plugin.name + '：本机已装 ' + already)
   } else {
   const dirName = plugin.dirName || plugin.name
-  let spec
+  let fileSpec = ''
   if (manifest.format === 'full') {
     const dir = path.join(root, 'plugins', dirName)
     if (!fs.existsSync(dir)) {
@@ -185,32 +191,53 @@ for (const plugin of manifest.plugins || []) {
       continue
     }
     if (dryRun) {
-      spec = 'file:' + dir.replace(/\\/gu, '/')
+      fileSpec = 'file:' + dir.replace(/\\/gu, '/')
     } else {
       const target = path.join(vendor, dirName)
       fs.rmSync(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
       copyTree(dir, target)
-      spec = 'file:' + target.replace(/\\/gu, '/')
+      fileSpec = 'file:' + target.replace(/\\/gu, '/')
     }
-  } else {
-    spec = plugin.name + '@' + plugin.version
   }
-  const args = [...cli.args, 'plugin', '--profile', profile, 'add', spec]
+  const marketSpec = plugin.name + (plugin.version ? '@' + plugin.version : '')
+  // 需求：包里这份当初是从插件市场取的（source npm/market），安装时优先按市场版本装，
+  // 取不到（离线 / registry 上没有这个版本）再退回包内自带的那份。
+  const fromMarket = plugin.source === 'npm' || plugin.source === 'market'
+  const attempts = []
+  if (fromMarket) attempts.push({ spec: marketSpec, from: 'market' })
+  if (fileSpec) attempts.push({ spec: fileSpec, from: 'pack' })
+  if (!fromMarket && !fileSpec) attempts.push({ spec: marketSpec, from: 'market' })
+  if (attempts.length === 0) attempts.push({ spec: marketSpec, from: 'market' })
+  const runAdd = (spec) => {
+    const args = [...cli.args, 'plugin', '--profile', profile, 'add', spec]
+    if (dryRun) return { ok: true, output: '', args }
+    const res = spawnSync(cli.exe, args, {
+      encoding: 'utf8',
+      env: { ...process.env, CI: '1', ...(cli.env.ELECTRON_RUN_AS_NODE ? { ELECTRON_RUN_AS_NODE: '1' } : {}) },
+      shell: cli.shell === true,
+      maxBuffer: 32 * 1024 * 1024,
+    })
+    return { ok: res.status === 0, output: String(res.stdout || '') + String(res.stderr || ''), args }
+  }
   if (dryRun) {
-    results.push({ plugin, ok: true, message: '演练：' + [cli.exe, ...args].join(' ') })
+    results.push({ plugin, ok: true, message: '演练：' + [cli.exe, ...runAdd(attempts[0].spec).args].join(' ') + (attempts.length > 1 ? '（失败则退回包内那份）' : '') })
     continue
   }
-  say('安装 ' + plugin.name + '@' + plugin.version + ' …')
   const started = Date.now()
-  const res = spawnSync(cli.exe, args, {
-    encoding: 'utf8',
-    env: { ...process.env, CI: '1', ...(cli.env.ELECTRON_RUN_AS_NODE ? { ELECTRON_RUN_AS_NODE: '1' } : {}) },
-    shell: cli.shell === true,
-    maxBuffer: 32 * 1024 * 1024,
-  })
-  const output = String(res.stdout || '') + String(res.stderr || '')
-  const ok = res.status === 0
-  results.push({ plugin, ok, message: ok ? '已安装（' + Math.round((Date.now() - started) / 100) / 10 + ' 秒）' : '失败：' + output.trim().split(/\r?\n/u).slice(-3).join(' | ') })
+  let last = null
+  let usedFrom = ''
+  for (const attempt of attempts) {
+    say('安装 ' + plugin.name + (plugin.version ? '@' + plugin.version : '') + '（' + (attempt.from === 'market' ? '插件市场版本' : '包内自带') + '）…')
+    const res = runAdd(attempt.spec)
+    last = res
+    if (res.ok) { usedFrom = attempt.from; break }
+    if (attempts.length > 1 && attempt.from === 'market') say('  市场版本没装上，改用包内自带的那份再试一次')
+  }
+  const ok = Boolean(last && last.ok)
+  const message = ok
+    ? '已安装（' + Math.round((Date.now() - started) / 100) / 10 + ' 秒' + (usedFrom === 'market' ? '，市场版本' : usedFrom === 'pack' ? '，包内自带' : '') + '）'
+    : '失败：' + String(last && last.output || '').trim().split(/\r?\n/u).slice(-3).join(' | ')
+  results.push({ plugin, ok, message })
   say('  ' + (ok ? '完成' : '失败'))
   }
 }
@@ -231,8 +258,11 @@ function restoreConfigs() {
     }
     const id = String(snap.id || snap.name || name.replace(/\.json$/u, ''))
     let text = fs.existsSync(patchFile) ? fs.readFileSync(patchFile, 'utf8') : ''
-    const trimmed = text.trim()
-    if (trimmed === '' || trimmed === '[]') text = ''
+    // DSH 新建 profile 的补丁文件是「几行注释 + []」：只把 [] 当成空文档去掉，
+    // 否则追加会写出两份 YAML 文档（[] 之后再跟 - id: …），整个文件就废了。
+    const bare = text.split(/\r?\n/u).map((line) => line.trim()).filter((line) => line !== '' && !line.startsWith('#'))
+    const emptyDoc = bare.length === 0 || (bare.length === 1 && /^(?:\[\s*\]|\{\s*\}|null|~)$/u.test(bare[0]))
+    if (emptyDoc) text = ''
     if (new RegExp('(^|\\n)\\s*-\\s*id:\\s*' + id.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')).test(text)) {
       say('  配置条目已存在，保持本机原样：' + id)
       continue
