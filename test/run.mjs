@@ -14,6 +14,7 @@ import { checkCompatibility } from '../lib/compat.mjs'
 import { buildPack, PackRefused, captureConfigs } from '../lib/pack.mjs'
 import { inspectPackBuffer, installPack } from '../lib/install.mjs'
 import { DEFAULT_CONFIG } from '../lib/store.mjs'
+import { listInstalled } from '../lib/profile.mjs'
 
 const results = []
 let failed = 0
@@ -678,6 +679,180 @@ await testAsync('客户端组件在假 React 下能渲染（抓未定义变量�
   }
 })
 
+await testAsync('本机已装且有市场版时：勾选默认走市场版，避免把本地开发版打进包', async () => {
+  const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert(
+    source.includes('entry.installed === false || entry.hasMarket ? "npm" : "profile"'),
+    'entrySource 应把「本机已装 + 有市场版」也算成 npm 源',
+  )
+  assert(
+    source.includes('entry.hasMarket ? entry.marketVersion || entry.version || "" : entry.version || ""'),
+    'entrySpec 在有市场版时应取市场版本号，而不是本机版本号',
+  )
+  const addAll = source.slice(source.indexOf('const addAllLocal'), source.indexOf('const clearSelected'))
+  assert(addAll.includes('entrySource(entry)'), '「全部加入」也要按同一条默认规则走')
+  assert(addAll.includes('entrySpec(entry)'), '「全部加入」也要按同一条默认规则取版本')
+  assert(source.includes('entry.hasMarket ? "已安装" : "本机"'), '列表里要标出「已安装」，用户才知道默认换成哪份')
+  const switchBlock = source.slice(source.indexOf('const switchMarket'), source.indexOf('const addAllLocal'))
+  assert(
+    switchBlock.includes('source: "profile", spec: entry.version || "", mode: "local"'),
+    '切回本机版要默认按「本地改动」打（本机版通常带着自己的配置或改动）',
+  )
+})
+
+await testAsync('插件自带的内部子包不算独立插件（壁纸引擎那种一个插件发 9 个包）', async () => {
+  const home = tmpDir('nested-plugin')
+  const profileDir = path.join(home, 'profiles', 'desktop')
+  const modules = path.join(profileDir, 'node_modules')
+  const writePkg = (dir, pkg) => {
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(pkg, null, 2))
+  }
+  writePkg(profileDir, {
+    name: 'desktop-profile',
+    private: true,
+    dependencies: { 'dsh-plugin-wallpaper-engine': '1.4.2' },
+    dsh: { profile: { bundles: ['dsh-plugin-wallpaper-engine'] } },
+  })
+  const sub = ['about-notice', 'fonts', 'fx']
+  writePkg(path.join(modules, 'dsh-plugin-wallpaper-engine'), {
+    name: 'dsh-plugin-wallpaper-engine',
+    version: '1.4.2',
+    dependencies: Object.fromEntries(sub.map((s) => ['dsh-plugin-wallpaper-engine-' + s, '1.4.2'])),
+    dsh: { bundle: { patch: './cordis.patch.yml' } },
+  })
+  for (const s of sub) {
+    writePkg(path.join(modules, 'dsh-plugin-wallpaper-engine-' + s), {
+      name: 'dsh-plugin-wallpaper-engine-' + s,
+      version: '1.4.2',
+      dependencies: {},
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    })
+  }
+  const all = listInstalled(profileDir)
+  const direct = all.filter((p) => p.isPlugin && p.isDirect)
+  const hidden = all.filter((p) => p.isPlugin && !p.isDirect)
+  assertEqual(direct.map((p) => p.name), ['dsh-plugin-wallpaper-engine'], '只有父包算独立插件')
+  assertEqual(hidden.length, sub.length, '三个子包应被识别为内部组件')
+  for (const item of hidden) {
+    assertEqual(item.transitiveOf, 'dsh-plugin-wallpaper-engine', '要记下它是谁的子包：' + item.name)
+  }
+})
+
+await testAsync('附属包识别要覆盖多层、残留包与 scoped 包', async () => {
+  const home = tmpDir('nested-deep')
+  const profileDir = path.join(home, 'profiles', 'desktop')
+  const modules = path.join(profileDir, 'node_modules')
+  const writePkg = (dir, pkg) => {
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(pkg, null, 2))
+  }
+  writePkg(profileDir, {
+    name: 'desktop-profile',
+    private: true,
+    // 只声明父包；@demo/dsh-scoped-plugin 只在 bundles 里登记，也算用户装的
+    dependencies: { 'dsh-plugin-shallow': '1.0.0' },
+    dsh: { profile: { bundles: ['dsh-plugin-shallow', '@demo/dsh-scoped-plugin'] } },
+  })
+  // 两层嵌套：shallow → mid → leaf
+  writePkg(path.join(modules, 'dsh-plugin-shallow'), {
+    name: 'dsh-plugin-shallow',
+    version: '1.0.0',
+    dependencies: { 'dsh-plugin-mid': '1.0.0' },
+  })
+  writePkg(path.join(modules, 'dsh-plugin-mid'), {
+    name: 'dsh-plugin-mid',
+    version: '1.0.0',
+    dependencies: { 'dsh-plugin-leaf': '1.0.0' },
+  })
+  writePkg(path.join(modules, 'dsh-plugin-leaf'), { name: 'dsh-plugin-leaf', version: '1.0.0' })
+  // scoped 包只在 bundles 里登记
+  writePkg(path.join(modules, '@demo', 'scoped-plugin'), {
+    name: '@demo/dsh-scoped-plugin',
+    version: '2.0.0',
+    dependencies: { '@demo/dsh-scoped-child': '2.0.0' },
+  })
+  writePkg(path.join(modules, '@demo', 'scoped-child'), { name: '@demo/dsh-scoped-child', version: '2.0.0' })
+  // 删插件后留下的残包：谁都没声明，也不是谁的依赖
+  writePkg(path.join(modules, 'dsh-plugin-leftover'), { name: 'dsh-plugin-leftover', version: '0.9.0' })
+
+  const all = listInstalled(profileDir)
+  const nameOf = (list) => list.map((p) => p.name).sort()
+  const direct = all.filter((p) => p.isPlugin && p.isDirect)
+  assertEqual(nameOf(direct), ['@demo/dsh-scoped-plugin', 'dsh-plugin-shallow'], '只有声明或登记在 bundles 的算直接装')
+  const byName = new Map(all.map((p) => [p.name, p]))
+  assertEqual(byName.get('dsh-plugin-mid').transitiveOf, 'dsh-plugin-shallow', '第一层子包记在父包名下')
+  assertEqual(byName.get('dsh-plugin-leaf').transitiveOf, 'dsh-plugin-mid', '第二层子包记在它的直接父包名下')
+  assertEqual(byName.get('dsh-plugin-leaf').isDirect, false, '深层子包也不能算直接装')
+  assertEqual(byName.get('@demo/dsh-scoped-child').transitiveOf, '@demo/dsh-scoped-plugin', 'scoped 子包同样要识别')
+  assertEqual(byName.get('dsh-plugin-leftover').isDirect, false, '残包不算插件')
+  assertEqual(byName.get('dsh-plugin-leftover').isOrphan, true, '残包要标出来，方便界面说明')
+  assertEqual(byName.get('dsh-plugin-mid').isOrphan, false, '有父包的不算残包')
+})
+
+await testAsync('打包：同一包里父包与子包都在时，子包标成内部组件', async () => {
+  const home = tmpDir('pack-nested')
+  const parentDir = path.join(home, 'node_modules', 'dsh-plugin-parent')
+  const childDir = path.join(home, 'node_modules', 'dsh-plugin-child')
+  fs.mkdirSync(parentDir, { recursive: true })
+  fs.mkdirSync(childDir, { recursive: true })
+  fs.writeFileSync(path.join(parentDir, 'package.json'), JSON.stringify({
+    name: 'dsh-plugin-parent',
+    version: '1.0.0',
+    license: 'MIT',
+    dependencies: { 'dsh-plugin-child': '1.0.0' },
+  }))
+  fs.writeFileSync(path.join(parentDir, 'index.js'), 'export default {}\n')
+  fs.writeFileSync(path.join(childDir, 'package.json'), JSON.stringify({
+    name: 'dsh-plugin-child',
+    version: '1.0.0',
+    license: 'MIT',
+  }))
+  fs.writeFileSync(path.join(childDir, 'index.js'), 'export default {}\n')
+
+  const installed = listInstalled(path.join(home, 'profiles', 'desktop'))
+  // listInstalled 在空目录会返回空：这里直接手搓两条，等价于 profile 里有父包与子包
+  const items = [
+    { name: 'dsh-plugin-parent', dirName: 'dsh-plugin-parent', version: '1.0.0', dir: parentDir, realDir: parentDir, pkg: JSON.parse(fs.readFileSync(path.join(parentDir, 'package.json'), 'utf8')) },
+    { name: 'dsh-plugin-child', dirName: 'dsh-plugin-child', version: '1.0.0', dir: childDir, realDir: childDir, pkg: JSON.parse(fs.readFileSync(path.join(childDir, 'package.json'), 'utf8')) },
+  ]
+  assertEqual(installed.length, 0, '空 profile 应该没有条目')
+  const config = { ...DEFAULT_CONFIG, licenseAllow: ['MIT'] }
+  const packed = await buildPack({
+    selection: [
+      { name: 'dsh-plugin-parent', source: 'profile', mode: 'local' },
+      { name: 'dsh-plugin-child', source: 'profile', mode: 'local' },
+    ],
+    options: { includePayload: true, includeConfig: false, confirmLicense: true, name: '嵌套包' },
+    context: { config, profileDir: path.join(home, 'profiles', 'desktop'), installed: items, dshVersion: '0.0.0', pluginVersion: 'test' },
+  })
+  const parent = packed.manifest.plugins.find((p) => p.name === 'dsh-plugin-parent')
+  const child = packed.manifest.plugins.find((p) => p.name === 'dsh-plugin-child')
+  assertEqual(parent.transitiveOf, '', '父包不是内部组件')
+  assertEqual(child.transitiveOf, 'dsh-plugin-parent', '子包要标成父包的内置件')
+  assert(packed.notes.some((line) => line.includes('内部组件')), '清单说明里要写出来')
+
+  const unpacked = inspectPackBuffer(packed.buffer, { config })
+  assertEqual(unpacked.manifest.plugins.find((p) => p.name === 'dsh-plugin-child').transitiveOf, 'dsh-plugin-parent', '读回来也要保留 transitiveOf')
+
+  const targetHome = tmpDir('pack-nested-target')
+  const targetProfile = path.join(targetHome, 'profiles', 'desktop')
+  fs.mkdirSync(targetProfile, { recursive: true })
+  fs.writeFileSync(path.join(targetProfile, 'package.json'), JSON.stringify({ name: 'p', private: true }))
+  const { entries } = inspectPackBuffer(packed.buffer, { config })
+  const run = await installPack({
+    manifest: unpacked.manifest,
+    entries,
+    config,
+    options: { force: true, applyConfig: false, keepLocal: false, enableBundles: false, deferExisting: false },
+    context: { profileDir: targetProfile, runCli: async () => ({ code: 0, output: 'fake cli' }) },
+  })
+  const childAction = run.actions.find((a) => a.plugin === 'dsh-plugin-child')
+  assertEqual(childAction.action, 'skipped', '子包不该单独装')
+  assert(childAction.message.includes('随父包一起安装'), '跳过原因要说清：' + childAction.message)
+  assert(run.actions.some((a) => a.plugin === 'dsh-plugin-parent' && a.action === 'install'), '父包照常装')
+})
+
 await testAsync('进度窗标题栏：按在按钮上不算拖动，也不会顺手展开/收起', async () => {
   const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   // 拖拽起点要跳过按钮，否则 setPointerCapture 会把 click 抢走，按钮就点不到
@@ -780,6 +955,97 @@ await testAsync('安装：联网且市场有时优先按市场版本，关掉开
   assert(localCalls[localCalls.length - 1].startsWith('file:'), '应该按包内那份装，实际：' + localCalls[localCalls.length - 1])
   const localAction = localRun.actions.find((a) => a.plugin === 'demo-plugin')
   assertEqual(localAction.source, 'pack')
+})
+
+await testAsync('安装：本机版也有市场版时，按市场版装再把包内本地改动覆盖上去', async () => {
+  const { profileDir, installed } = await fixture()
+  const built = await buildPack({
+    selection: [{ name: 'demo-plugin', source: 'profile', mode: 'local' }],
+    options: { includePayload: true, includeConfig: false, includeLocalEdits: true, name: '本地改动包' },
+    context: packContext(baseConfig, profileDir, installed),
+  })
+  const inspected = inspectPackBuffer(built.buffer, { config: baseConfig })
+  assertEqual(inspected.manifest.plugins[0].localEdits, true, '这个包应当是「本地改动」模式')
+
+  const home = tmpDir('overlay-home')
+  const target = path.join(home, 'profiles', 'desktop')
+  fs.mkdirSync(target, { recursive: true })
+  fs.writeFileSync(path.join(target, 'package.json'), JSON.stringify({
+    name: 'desktop', private: true, dependencies: {}, dsh: { profile: { bundles: [] } },
+  }, null, 2))
+  fs.writeFileSync(path.join(target, 'cordis.patch.yml'), '[]\n')
+
+  // 假管理器：像 pnpm 一样把「市场版」落进 node_modules，内容标记成 market
+  const calls = []
+  const run = await installPack({
+    manifest: inspected.manifest,
+    entries: inspected.entries,
+    config: baseConfig,
+    options: { force: true, applyConfig: false, keepLocal: false, enableBundles: false },
+    context: {
+      profileDir: target,
+      installBundle: async (spec) => {
+        calls.push(spec)
+        const dir = path.join(target, 'node_modules', 'demo-plugin')
+        fs.mkdirSync(dir, { recursive: true })
+        fs.writeFileSync(path.join(dir, 'index.js'), '// market build\n')
+        fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'demo-plugin', version: '9.9.9' }))
+        return { changed: true, stage: 'install', application: 'applied', target: spec }
+      },
+      resolveMarket: async (plugin) => ({ spec: plugin.name + '@9.9.9', version: '9.9.9' }),
+    },
+  })
+  assertEqual(run.ok, true, '安装应当成功：' + JSON.stringify(run.lines))
+  assertEqual(calls[0], 'demo-plugin@9.9.9', '依赖应当是 名字@版本（市场识别成市场版），实际：' + calls[0])
+  const installedFile = fs.readFileSync(path.join(target, 'node_modules', 'demo-plugin', 'index.js'), 'utf8')
+  assert(!installedFile.includes('market build'), '包内的本地改动应当覆盖掉市场版的文件')
+  assert(run.lines.some((line) => line.includes('本地改动覆盖上去')), '结果里要说清楚做过覆盖：' + JSON.stringify(run.lines.slice(-4)))
+  const action = run.actions.find((a) => a.plugin === 'demo-plugin')
+  assertEqual(action.source, 'market', '动作来源标成 market')
+})
+
+await testAsync('安装：包里取自市场时，关掉「优先市场」也仍按市场版本装', async () => {
+  const targetHome = tmpDir('market-source')
+  const targetProfile = path.join(targetHome, 'profiles', 'desktop')
+  fs.mkdirSync(targetProfile, { recursive: true })
+  fs.writeFileSync(path.join(targetProfile, 'package.json'), JSON.stringify({
+    name: 'desktop', private: true, dependencies: {}, dsh: { profile: { bundles: [] } },
+  }, null, 2))
+  fs.writeFileSync(path.join(targetProfile, 'cordis.patch.yml'), '[]\n')
+  const manifest = normalizeManifest({
+    schema: 1,
+    kind: 'dsh-modpack',
+    format: 'lite',
+    createdAt: new Date().toISOString(),
+    name: '市场来源包',
+    plugins: [{ name: 'demo-plugin', version: '1.2.3', source: 'npm' }],
+  })
+  const calls = []
+  const run = await installPack({
+    manifest,
+    entries: [],
+    config: baseConfig,
+    options: { preferMarket: false, applyConfig: false, keepLocal: false, enableBundles: false, deferExisting: false },
+    context: {
+      profileDir: targetProfile,
+      resolveMarket: async (plugin) => ({ spec: plugin.name + '@' + plugin.version, version: plugin.version }),
+      runCli: async (profile, args) => { calls.push(args[args.length - 1]); return { code: 0, output: 'fake' } },
+    },
+  })
+  assertEqual(run.ok, true, '安装应成功')
+  assertEqual(calls[calls.length - 1], 'demo-plugin@1.2.3', '市场来源的包关了开关也走市场版本，实际：' + calls[calls.length - 1])
+  const action = run.actions.find((a) => a.plugin === 'demo-plugin')
+  assertEqual(action.source, 'market', '动作里要标成市场来源')
+})
+
+await testAsync('独立安装器：市场来源的插件先按市场版本装，失败才退回包内那份', async () => {
+  const source = fs.readFileSync(new URL('../assets/install-stub.mjs', import.meta.url), 'utf8')
+  assert(source.includes("plugin.source === 'npm' || plugin.source === 'market'"), '安装器要识别市场来源')
+  assert(
+    source.indexOf("from: 'market'") < source.indexOf("from: 'pack'"),
+    '市场那次尝试要排在包内副本之前',
+  )
+  assert(source.includes('市场版本没装上，改用包内自带的那份再试一次'), '失败要提示退回包内副本')
 })
 
 // —— 优化项：配置擦除、扫描去重、管理器安装 ——
@@ -885,6 +1151,36 @@ await testAsync('安装：插件管理器报错时自动退回命令行', async 
   assertEqual(run.ok, true)
   assertEqual(cliCalls, 1, '管理器失败后应该用命令行补一次')
   assert(run.lines.some((line) => line.includes('改用命令行重试')), '应留下退回说明')
+})
+
+await testAsync('patch yml：只有注释和 [] 的空文档也能安全追加（新 profile 的默认写法）', async () => {
+  const { upsertPatchItem, parseYaml } = await import('../lib/yamlish.mjs')
+  const before = '# Your patch layer for this dsh profile, applied after every bundle layer:\n[]\n'
+  const { text: after, action } = upsertPatchItem(before, { id: 'demo', name: 'demo-plugin', config: { a: 1 } })
+  assertEqual(action, 'inserted')
+  const parsed = parseYaml(after)
+  assertEqual(parsed.length, 1, '追加后应当只有一个条目，实际解析：' + JSON.stringify(parsed))
+  assertEqual(parsed[0].id, 'demo')
+})
+
+await testAsync('patch yml：同一个 id 有多条时改最后那条，并清掉前面的重复', async () => {
+  const { upsertPatchItem, parseYaml } = await import('../lib/yamlish.mjs')
+  const before = [
+    '- id: demo',
+    '  name: demo-plugin',
+    '  config:',
+    '    enabled: true',
+    '- id: demo',
+    '  name: demo-plugin',
+    '  disabled: true',
+    '',
+  ].join('\n')
+  const { text: after, action } = upsertPatchItem(before, { id: 'demo', name: 'demo-plugin', config: { enabled: false } })
+  assertEqual(action, 'replaced')
+  const parsed = parseYaml(after)
+  assertEqual(parsed.length, 1, '重复条目应当合并成一条，实际：' + JSON.stringify(parsed))
+  assertEqual(parsed[0].config.enabled, false, '应当改到生效的那条（最后一条）上')
+  assert(!parsed[0].disabled, "被合并掉的那条 disabled 不该复活")
 })
 
 for (const [state, name, detail] of results) {
