@@ -19,51 +19,15 @@ import { catalogSummary, searchCatalog, syncCatalog, categoryMapFor, lookupPlugi
 import { parseYaml } from './lib/yamlish.mjs'
 import { readPatch } from './lib/profile.mjs'
 import { buildReadme, pluginSummary } from './lib/manifest.mjs'
+import { sendJson as json, readBody, readRawBody, asJson, MAX_JSON_BODY, MAX_DROP_BODY } from './lib/http.mjs'
 
-const VERSION = '0.1.0'
-const MAX_JSON_BODY = 1024 * 1024
-// 直接拖进来的整合包走原始字节（不塞 base64），上限与单次下载一致，够装大包
-const MAX_DROP_BODY = 256 * 1024 * 1024
+const VERSION = (() => {
+  try { return JSON.parse(fs.readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version || '0.0.0' } catch { return '0.0.0' }
+})()
 const PENDING_TTL = 30 * 60 * 1000
 const PENDING_MAX = 4
 const PENDING_BYTES = 512 * 1024 * 1024
 
-const json = (res, code, obj) => {
-  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
-  res.end(JSON.stringify(obj))
-}
-
-const readBody = (req, limit = MAX_JSON_BODY) => new Promise((resolve, reject) => {
-  let size = 0
-  const chunks = []
-  req.on('data', (chunk) => {
-    size += chunk.length
-    if (size > limit) { reject(Object.assign(new Error('请求体过大'), { statusCode: 413 })); req.destroy(); return }
-    chunks.push(chunk)
-  })
-  req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
-  req.on('error', reject)
-})
-
-const readRawBody = (req, limit = MAX_DROP_BODY) => new Promise((resolve, reject) => {
-  let size = 0
-  const chunks = []
-  req.on('data', (chunk) => {
-    size += chunk.length
-    if (size > limit) {
-      reject(Object.assign(new Error('整合包太大：上限 ' + Math.round(limit / 1024 / 1024) + ' MB'), { statusCode: 413 }))
-      req.destroy()
-      return
-    }
-    chunks.push(chunk)
-  })
-  req.on('end', () => resolve(Buffer.concat(chunks)))
-  req.on('error', reject)
-})
-
-const asJson = (text, fallback) => {
-  try { return JSON.parse(text) } catch { return fallback }
-}
 
 export default {
   name: 'dsh-modpack-kit',
@@ -112,7 +76,12 @@ export default {
           pluginsTab: config.showInPluginsTab === true,
         },
         installedTotal: installed.length,
-        installed: installed.filter((p) => p.isPlugin).map((p) => ({
+        // 插件自带的内部子包（由父包依赖一起装进来）与残留包不单独列；只给数字，界面上说明一句
+        installedHidden: installed.filter((p) => p.isPlugin && !p.isDirect).length,
+        installedOrphans: installed.filter((p) => !p.isDirect && p.isOrphan).length,
+        // 只列 profile 直接声明的插件；插件自带的内部子包（如壁纸引擎的 fonts/fx/glass…）由父包带进来，
+        // 单独列出来会被重复打包、重复安装。
+        installed: installed.filter((p) => p.isPlugin && p.isDirect).map((p) => ({
           name: p.name,
           version: p.version,
           description: p.description || '',
@@ -247,7 +216,7 @@ export default {
     // 首屏只要「已装 + 分类」，不再整份目录下发；搜索走服务端分页，一次一页。
     route('/dsh-modpack-kit/api/catalog', async (req, res) => {
       if (req.method !== 'GET') { json(res, 405, { ok: false }); return }
-      const installedList = installedOrEmpty().filter((p) => p.isPlugin).map((p) => ({
+      const installedList = installedOrEmpty().filter((p) => p.isPlugin && p.isDirect).map((p) => ({
         name: p.name, version: p.version, isBundle: p.isBundle, hasClient: p.hasClient, description: p.description || '',
       }))
       let catalog = null
@@ -290,7 +259,7 @@ export default {
     route('/dsh-modpack-kit/api/catalog/search', async (req, res) => {
       if (!needPost(req, res)) return
       const body = asJson(await readBody(req), {}) || {}
-      const localPlugins = installedOrEmpty().filter((p) => p.isPlugin)
+      const localPlugins = installedOrEmpty().filter((p) => p.isPlugin && p.isDirect)
       const localCategories = categoryMapFor(config, localPlugins.map((p) => p.name))
       const installed = localPlugins.map((p) => ({
         name: p.name, version: p.version, description: p.description || '',
@@ -432,7 +401,16 @@ export default {
         const result = await buildPack({
           selection: selection.map((item) => {
             const name = String(item.name || '')
-            const here = installed.some((p) => p.name === name)
+            const entry = installed.find((p) => p.name === name)
+            if (entry && entry.isDirect === false) {
+              // 插件自带的内部子包（例如壁纸引擎的 fonts/fx/glass…）会随父包一起装，
+              // 单独打包会让它被重复安装；既没人声明、也不在依赖树里的残包同理不单独打。
+              const why = entry.transitiveOf
+                ? '是「' + entry.transitiveOf + '」的内部组件，会随父包一起装上'
+                : '不在 profile 的依赖清单里（像是删插件后留下的残包），重新装一次它所属的插件即可'
+              throw new Error('「' + name + '」' + why + '，不能单独打包')
+            }
+            const here = Boolean(entry)
             // 市场里没装的插件也能打包：本机没有这份代码，就从 registry 按版本取包
             const source = item.source === 'npm' || item.source === 'market' || !here ? 'npm' : 'profile'
             return {
