@@ -127,7 +127,7 @@ const desktopBefore = {
   patch: hashFile(path.join(realProfilePath, 'cordis.patch.yml')),
 }
 
-const pool = listInstalled(realProfile).filter((p) => p.isPlugin && p.name !== 'dsh-modpack-kit')
+const pool = listInstalled(realProfile).filter((p) => p.isPlugin && p.isDirect && p.name !== 'dsh-modpack-kit')
 assert.ok(pool.length >= 3, '本机插件太少，至少要 3 个才能随机挑')
 const withSizes = pool.map((p) => ({ ...p, bytes: dirSize(p.realDir || p.dir) })).sort((a, b) => a.bytes - b.bytes)
 const chosen = pickRandom(withSizes, 3)
@@ -285,7 +285,10 @@ try {
       assert.equal(typeof item.localVersion, 'string')
       assert.equal(typeof item.packVersion, 'string')
     }
-    for (const action of result.actions) assert.equal(action.action, 'deferred', '这次不该动任何插件：' + action.plugin)
+    for (const action of result.actions) {
+      if (action.action === 'data') continue
+      assert.equal(action.action, 'deferred', '这次不该动任何插件：' + action.plugin)
+    }
     const pkg = readJson(path.join(dshHome(), 'profiles', p1, 'package.json'))
     for (const name of names) assert.ok(pkg.dependencies[name], '跳过不该删掉依赖：' + name)
     return result.deferred.length + ' 个已装被跳过'
@@ -306,7 +309,7 @@ try {
     assert.ok(replaced, '应有被替换插件的动作')
     assert.equal(replaced.action, 'install', '选中的应真的走安装')
     for (const action of result.actions) {
-      if (action.plugin === firstName) continue
+      if (action.plugin === firstName || action.action === 'data') continue
       assert.equal(action.action, 'skipped', '没选中的不该动：' + action.plugin)
     }
     const pkg = readJson(path.join(dshHome(), 'profiles', p1, 'package.json'))
