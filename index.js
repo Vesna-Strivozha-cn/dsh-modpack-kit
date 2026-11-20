@@ -18,7 +18,7 @@ import { groupFindings } from './lib/scan.mjs'
 import { catalogSummary, searchCatalog, syncCatalog, categoryMapFor, lookupPlugins } from './lib/market-catalog.mjs'
 import { parseYaml } from './lib/yamlish.mjs'
 import { readPatch } from './lib/profile.mjs'
-import { buildReadme, pluginSummary } from './lib/manifest.mjs'
+import { buildReadme } from './lib/manifest.mjs'
 import { sendJson as json, readBody, readRawBody, asJson, MAX_JSON_BODY, MAX_DROP_BODY } from './lib/http.mjs'
 
 const VERSION = (() => {
@@ -300,11 +300,14 @@ export default {
     // —— 打包（支持后台任务：左下角悬浮窗要进度，且允许同时打多个包） ——
     const jobs = new Map()
     let jobSeq = 0
-    // 收尾的记录按状态分别留：完成的多留一会儿方便回看，失败/取消的很快就清，别堆在眼前。
-    // 秒数来自设置 jobKeepSeconds（0 = 收尾就清），测试就靠它把时间压到零。
+    // 任务记录默认留到 DSH 下次启动（或点「清空进程」），切页面、换入口都不丢。
+    // 设置里给 jobKeepSeconds 正数才按秒自动清；0 = 不按时间清。
     const FAILED_KEEP = 15 * 1000
     const RUNNING_STALE = 10 * 60 * 1000
-    const keepMs = () => Math.max(0, Number(config.jobKeepSeconds) || 0) * 1000
+    const keepMs = () => {
+      const seconds = Number(config.jobKeepSeconds)
+      return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0
+    }
     const heartbeatAge = (job, now) => {
       const stamp = Date.parse(job.updatedAt || job.finishedAt || job.startedAt || '') || 0
       return stamp > 0 ? now - stamp : 0
@@ -318,7 +321,6 @@ export default {
       job.note = '已自动收掉'
       job.finishedAt = new Date().toISOString()
       job.updatedAt = job.finishedAt
-      job.updatedAt = job.finishedAt
     }
     const pruneJobs = () => {
       const now = Date.now()
@@ -328,12 +330,14 @@ export default {
         // 停在风险点等你决定的，一直留着
         if (job.status === 'paused') continue
         if (job.status === 'running') continue
+        // keep === 0：一直留到重启或手动清空（主人要求切界面、退出面板都不丢）
+        if (keep <= 0) continue
         const age = heartbeatAge(job, now)
         const limit = job.status === 'done' || job.status === 'acked' ? keep : Math.min(keep, FAILED_KEEP)
-        if (limit <= 0 || age > limit) jobs.delete(id)
+        if (age > limit) jobs.delete(id)
       }
       for (const id of [...jobs.keys()]) {
-        if (jobs.size <= 20) break
+        if (jobs.size <= 200) break
         const job = jobs.get(id)
         if (job.status === 'running' || job.status === 'paused') continue
         jobs.delete(id)
@@ -413,11 +417,21 @@ export default {
             const here = Boolean(entry)
             // 市场里没装的插件也能打包：本机没有这份代码，就从 registry 按版本取包
             const source = item.source === 'npm' || item.source === 'market' || !here ? 'npm' : 'profile'
+            // 每个插件自带「插件预设 / 自定义配置」：自定义 = 带本机配置与数据快照，
+            // 本机来源的还连带本机代码改动（旧字段 mode 的 local）。老客户端只发 mode 也认。
+            const choice = item.choice === 'preset' || item.choice === 'custom'
+              ? item.choice
+              : item.configMode === 'preset' || item.mode === 'base' || item.mode === 'preset'
+                ? 'preset'
+                : item.configMode === 'custom' || item.mode === 'local' || item.mode === 'custom'
+                  ? 'custom'
+                  : (source === 'profile' ? 'custom' : 'preset')
             return {
               name,
               source,
               spec: item.spec ? String(item.spec) : (source === 'npm' ? String(item.version || '') : ''),
-              mode: item.mode === 'local' ? 'local' : item.mode === 'base' ? 'base' : undefined,
+              mode: choice === 'custom' ? 'local' : 'base',
+              configMode: choice,
               download: (spec) => downloadPackage(name, spec || item.spec || String(item.version || ''), config),
             }
           }),
@@ -545,7 +559,13 @@ export default {
           options: body.options && typeof body.options === 'object' ? body.options : {},
         }))
       } catch { job.body = null }
-      performPack(body, job)
+      // 烟测用：假 ctx 里整包是同步 CPU 活，会在微任务里一口气跑完，
+      // 「正在跑的任务不能删」这类用例没有观察窗口。仅当显式设了环境变量才延后开跑。
+      const testDelay = Number(process.env.DSH_MODPACK_TEST_JOB_DELAY_MS || 0)
+      const run = testDelay > 0
+        ? new Promise((resolve) => setTimeout(resolve, testDelay)).then(() => performPack(body, job))
+        : performPack(body, job)
+      run
         .then((payload) => finishPackJob(job, payload))
         .catch((error) => {
           job.status = 'failed'
@@ -1070,4 +1090,3 @@ export default {
   },
 }
 
-export { pluginSummary }
