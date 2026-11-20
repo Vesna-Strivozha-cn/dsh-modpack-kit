@@ -9,7 +9,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import assert from 'node:assert/strict'
-import { Readable } from 'node:stream'
+import { mountFakeHost } from './fake-host.mjs'
 
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-modpack-risk-'))
 process.env.DSH_HOME = home
@@ -54,37 +54,7 @@ const writeIndex = (names) => fs.writeFileSync(path.join(catalogDir, 'market.jso
 writeIndex([])
 
 const plugin = (await import('../../index.js')).default
-const routes = new Map()
-plugin.apply({
-  webServer: { register(entry) { routes.set(entry.path, entry.handler); return () => routes.delete(entry.path) } },
-  get() { return undefined },
-  effect(fn) { const dispose = fn(); return () => { try { dispose && dispose() } catch {} } },
-})
-
-function fakeRes() {
-  const state = { code: 200, headers: {}, chunks: [] }
-  return {
-    state,
-    set statusCode(v) { state.code = v },
-    get statusCode() { return state.code },
-    writeHead(code, headers) { state.code = code; Object.assign(state.headers, headers || {}) },
-    end(buf) { if (buf) state.chunks.push(Buffer.isBuffer(buf) ? buf : Buffer.from(String(buf))); state.done = true },
-  }
-}
-
-async function call(pathname, { method = 'GET', body = null } = {}) {
-  const handler = routes.get(pathname)
-  assert.ok(handler, 'route missing: ' + pathname)
-  const req = Readable.from(body === null ? [] : [Buffer.from(JSON.stringify(body))])
-  req.method = method
-  req.headers = { host: '127.0.0.1:1', 'content-type': 'application/json' }
-  const res = fakeRes()
-  await handler(req, res)
-  const raw = Buffer.concat(res.state.chunks)
-  let data = null
-  try { data = JSON.parse(raw.toString('utf8')) } catch {}
-  return { code: res.state.code, data }
-}
+const { call } = mountFakeHost(plugin, { host: '127.0.0.1:1' })
 
 const waitJob = async (id) => {
   let job = null
