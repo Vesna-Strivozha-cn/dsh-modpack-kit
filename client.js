@@ -71,6 +71,16 @@ window.__ModuleLoader__.load({
       if (same) return
       for (const fn of [...packStore.subs]) { try { fn(packStore.value) } catch (e) { /* 一个订阅出错不该拖垮别的 */ } }
     }
+    // 打包页草稿：只活在内存里（页面刷新 / DSH 重启即重置），切页签、换入口不丢
+    const packDraft = { value: { selected: null, options: null }, subs: new Set() }
+    function readPackDraft() {
+      return packDraft.value
+    }
+    function setPackDraft(patch) {
+      packDraft.value = { ...packDraft.value, ...patch }
+      for (const fn of [...packDraft.subs]) { try { fn(packDraft.value) } catch (e) { /* 一个订阅出错不该拖垮别的 */ } }
+    }
+
     function subscribePack(fn) {
       packStore.subs.add(fn)
       return () => packStore.subs.delete(fn)
@@ -593,13 +603,14 @@ window.__ModuleLoader__.load({
       const [marketInfo, setMarketInfo] = useState({})   // name -> 市场同名条目（标题/版本/分类）
       const [catalog, setCatalog] = useState((status && status.catalog) || { present: false, categories: [] })
       const [loading, setLoading] = useState(!(status && status.installed))
-      const [selected, setSelected] = useState({})     // name -> {source, spec, mode}
+      const draft = readPackDraft()
+      const [selected, setSelected] = useState(() => (draft.selected ? JSON.parse(JSON.stringify(draft.selected)) : {})) // name -> {source, spec, choice}
       const [query, setQuery] = useState("")
       const [category, setCategory] = useState("all")
       const [search, setSearch] = useState({ items: [], total: 0, page: 0, hasMore: false, error: "" })
       const [searching, setSearching] = useState(false)
       const [syncing, setSyncing] = useState("")
-      const [options, setOptions] = useState({
+      const [options, setOptions] = useState(() => (draft.options ? { ...draft.options } : {
         includePayload: true,
         includeConfig: true,
         scanBeforePack: true,
@@ -607,7 +618,10 @@ window.__ModuleLoader__.load({
         name: "DSH 整合包",
         description: "",
         author: "",
-      })
+      }))
+      // 草稿只活在内存里：切页签不丢，刷新/重启 DSH 回到默认
+      useEffect(() => { setPackDraft({ selected }) }, [selected])
+      useEffect(() => { setPackDraft({ options }) }, [options])
       const [busy, setBusy] = useState("")
       // 结果由 Home 保管（模块级缓存），切页签回来仍然在
       const result = props.result === undefined ? null : props.result
@@ -741,28 +755,28 @@ window.__ModuleLoader__.load({
             name: entry.name,
             source: entrySource(entry),
             spec: entrySpec(entry),
-            mode: "base",
+            choice: "preset",
           }
           return next
         })
       }
       const setSpec = (name, spec) => setSelected((prev) => ({ ...prev, [name]: { ...prev[name], spec } }))
-      const setMode = (name, mode) => setSelected((prev) => ({ ...prev, [name]: { ...prev[name], mode } }))
+      const setChoice = (name, choice) => setSelected((prev) => ({ ...prev, [name]: { ...prev[name], choice } }))
       // 同名市场版：装出来是上游原版代码 + 插件默认配置
       const switchMarket = (entry, toMarket) => setSelected((prev) => {
         if (!prev[entry.name]) return prev
         return {
           ...prev,
           [entry.name]: toMarket
-            ? { name: entry.name, source: "npm", spec: entry.marketVersion || "", mode: "base" }
-            : { name: entry.name, source: "profile", spec: entry.version || "", mode: "local" },
+            ? { name: entry.name, source: "npm", spec: entry.marketVersion || "", choice: "preset" }
+            : { name: entry.name, source: "profile", spec: entry.version || "", choice: "preset" },
         }
       })
 
       const addAllLocal = () => setSelected((prev) => {
         const next = { ...prev }
         for (const entry of localRows) {
-          if (!next[entry.name]) next[entry.name] = { name: entry.name, source: entrySource(entry), spec: entrySpec(entry), mode: "base" }
+          if (!next[entry.name]) next[entry.name] = { name: entry.name, source: entrySource(entry), spec: entrySpec(entry), choice: "preset" }
         }
         return next
       })
@@ -920,7 +934,7 @@ window.__ModuleLoader__.load({
             h("div", { style: strong }, "选择插件"),
             h("input", { style: { ...input, flex: "1 1 200px" }, placeholder: "搜索插件名 / 描述（在插件市场目录里搜）", value: query, onChange: (e) => setQuery(e.target.value) }),
             active ? h("button", { style: btn, onClick: () => { setQuery(""); setCategory("all") } }, "回到已装") : null,
-            h("button", { style: btn, onClick: addAllLocal, title: "把本机已装的全部插件加入选择（默认按基础配置打包，可逐个改）" }, "全部加入"),
+            h("button", { style: btn, onClick: addAllLocal, title: "把本机已装的全部插件加入选择（默认插件预设，可逐个改成自定义配置）" }, "全部加入"),
             h("button", { style: btn, disabled: picked.length === 0, onClick: clearSelected, title: "清空当前选择" }, "清除选择"),
             h("span", { style: hint }, loading ? "读取中…" : active
               ? ("已选 " + picked.length + " · 匹配 " + search.total + " 条" + (searching ? " · 搜索中…" : "") + (search.total > rows.length ? " · 已加载 " + rows.length : ""))
@@ -944,12 +958,22 @@ window.__ModuleLoader__.load({
               ? h("div", { style: hint }, loading ? "读取中…" : active ? (searching ? "搜索中…" : "无匹配条目") : "本机尚未安装插件")
               : rows.map((entry) => {
               const on = Boolean(selected[entry.name])
+              const chosenSource = on ? selected[entry.name].source : (entry.installed === false ? "npm" : "profile")
+              const sourceText = on ? (chosenSource === "npm" ? "市场版" : "本机版") : (entry.installed === false ? "市场未装" : "已装")
+              const sourceStyle = on
+                ? { ...chip, minWidth: "58px", textAlign: "center", fontWeight: 600, color: "var(--dsw-alias-label-primary)", borderColor: "var(--dsw-alias-border-l2)" }
+                : { ...chip, minWidth: "58px", textAlign: "center", color: "var(--dsw-alias-label-tertiary)" }
               return h("div", { key: entry.name, style: { display: "flex", gap: "8px", alignItems: "center", padding: "5px 2px", borderTop: "0.5px solid var(--dsw-alias-border-l2)", flexWrap: "wrap" } },
+                h("span", {
+                  style: sourceStyle,
+                  title: on
+                    ? (chosenSource === "npm" ? "当前选的是插件市场版：按上游版本取包，装出来和从市场装一样" : "当前选的是本机版：代码、配置条目与数据快照都取本机这份")
+                    : "还没勾选；勾上后默认按" + (entry.installed === false ? "市场版" : (entry.hasMarket ? "市场版" : "本机版")) + "打包",
+                }, sourceText),
                 h("input", { type: "checkbox", checked: on, onChange: () => toggle(entry) }),
                 h("div", { style: { flex: "1 1 220px", minWidth: "180px" } },
                   h("div", { style: label }, entry.title || entry.name, " ", h("span", { style: hint }, "@" + (entry.version || "?"))),
                   h("div", { style: hint }, (entry.description || "").slice(0, 110))),
-                h("span", { style: chip }, entry.installed === false ? "市场 · 未装" : (entry.hasMarket ? "已安装" : "本机")),
                 h("span", { style: { ...chip, color: "var(--dsw-alias-label-tertiary)" } }, labelOf(categoryOf(entry))),
                 entry.updateAvailable ? h(Tag, { color: "#2bb673" }, "市场版 " + (entry.marketVersion || entry.version) + " 更新") : null,
                 on ? h("input", {
@@ -958,26 +982,25 @@ window.__ModuleLoader__.load({
                   value: selected[entry.name].spec || "",
                   onChange: (e) => setSpec(entry.name, e.target.value),
                 }) : null,
-                on && entry.source === "profile" && selected[entry.name].source === "profile" ? h("div", { style: { display: "flex", gap: "4px" } },
-                  h("button", { style: selected[entry.name].mode === "base" ? chipOn : chipBtn, onClick: () => setMode(entry.name, "base"), title: "上游原版代码 + 插件默认配置，不带你的修改" }, "基础配置"),
-                  h("button", { style: selected[entry.name].mode === "local" ? chipOn : chipBtn, onClick: () => setMode(entry.name, "local"), title: "打你本机现在的代码、配置与数据快照" }, "本地改动")) : null,
+                on ? h("div", { style: { display: "flex", gap: "4px" } },
+                  h("button", { style: selected[entry.name].choice !== "custom" ? chipOn : chipBtn, onClick: () => setChoice(entry.name, "preset"), title: "只打插件默认配置：不带本机的配置与数据快照（代码按所选来源）" }, "插件预设"),
+                  h("button", { style: selected[entry.name].choice === "custom" ? chipOn : chipBtn, onClick: () => setChoice(entry.name, "custom"), title: "带上本机这份插件的配置与数据快照；本机来源的连代码改动一起打" }, "自定义配置")) : null,
                 entry.hasMarket && entry.source === "profile" && on ? h("button", {
                   style: { ...chipBtn, border: "none", fontSize: "10.5px", color: "var(--dsw-alias-label-tertiary)" },
                   onClick: () => switchMarket(entry, selected[entry.name].source !== "npm"),
                   title: "改用插件市场发的同名版本（上游原版代码 + 默认配置），装出来和从市场装一样",
-                }, selected[entry.name].source === "npm" ? "（切回本机版）" : "（切换市场版）") : null)
+                }, selected[entry.name].source === "npm" ? "改为本机版" : "改为市场版") : null)
             })),
           active && search.hasMore ? h("div", { style: row },
             h("button", { style: btn, disabled: searching, onClick: loadMore }, searching ? "加载中…" : ("加载更多（还有 " + Math.max(0, search.total - rows.length) + " 条）"))) : null,
           h("div", { style: hint }, active
             ? "排序：已装的排前面，其余按插件市场的相关度与目录顺序。分类和词条都来自插件市场目录。"
-            : "首屏只列本机已装。插件自带的内部组件（随父包一起装的那种）不单独列出" + (props.status && props.status.installedHidden ? "（本次隐藏 " + props.status.installedHidden + " 个）" : "") + "。本机已装且市场里有同名条目的，勾选时默认按市场版打包（不打本地开发版）；要打本机那份就点「（切回本机版）」，切回去默认按「本地改动」打（本机版通常带着自己的配置或改动）。搜索或点分类才去插件市场目录里查，服务端分页、一次一页。搜索结果里没装的插件也能直接勾选——打包时按版本从插件市场取包，装的时候同样从市场下载。")
+            : "首屏只列本机已装。插件自带的内部组件（随父包一起装的那种）不单独列出" + (props.status && props.status.installedHidden ? "（本次隐藏 " + props.status.installedHidden + " 个）" : "") + "。每行最前面标出当前来源：市场版按上游版本取包，本机版取本机这份。勾选时默认「插件预设」——只打插件默认配置；要带上本机的配置条目与数据快照就改成「自定义配置」（本机版还会连代码改动一起打）。本机已装且市场里有同名条目的，默认按市场版勾选；要打本机这份就点行末「改为本机版」。搜索或点分类才去插件市场目录里查，服务端分页、一次一页。搜索结果里没装的插件也能直接勾选——打包时按版本从插件市场取包，装的时候同样从市场下载。")
         ),
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
           h("div", { style: strong }, "包选项"),
           h("div", { style: { ...row, rowGap: "6px" } },
             h(Switch, { checked: options.includePayload, label: "包含插件本体（关=轻量版）", onChange: (v) => setOptions({ ...options, includePayload: v }) }),
-            h(Switch, { checked: options.includeConfig, label: "包含配置与数据快照", onChange: (v) => setOptions({ ...options, includeConfig: v }) }),
             h(ForcedSwitch, { label: "打包前安全检测（强制）", onNag: () => firePackNag("你想干什么") })),
           h(NagText, { text: packNag }),
           h("div", { style: { ...row, rowGap: "6px" } },
@@ -1398,6 +1421,13 @@ window.__ModuleLoader__.load({
         } finally { setBusy(false) }
       }
       const setField = (key, value) => setCfg((prev) => ({ ...(prev || {}), [key]: value }))
+      // 体积上限按 MB 输：先把输入框里的原始文本存着，点「保存数值」才换算成字节，
+      // 这样不会每敲一个数字就四舍五入一次（以前会越打越多，最后存成 25 GB 这种值）。
+      const [limitDraft, setLimitDraft] = useState(String(Math.round(((props.status && props.status.config && props.status.config.maxPackBytes) || 256 * 1048576) / 1048576)))
+      useEffect(() => {
+        if (!cfg) return
+        setLimitDraft(String(Math.round((cfg.maxPackBytes || 0) / 1048576)))
+      }, [cfg && cfg.maxPackBytes])
       // 显示位：先本地生效（不用等接口回来），再落盘
       const placementOn = {
         showInSettings: !!cfg && cfg.showInSettings !== false,
@@ -1442,9 +1472,40 @@ window.__ModuleLoader__.load({
           h("div", { style: hint }, "扫描只看代码与文本，不执行任何东西；命中原文不会落盘，也不进日志。"),
           h("div", { style: row },
             h("span", { style: label }, "体积上限（MB）"),
-            h("input", { style: { ...input, width: "90px" }, type: "number", min: "1", value: Math.round((cfg.maxPackBytes || 0) / 1048576), onChange: (e) => setField("maxPackBytes", Number(e.target.value) * 1048576) }),
-            h("button", { style: btn, disabled: busy, onClick: () => patch({ maxPackBytes: cfg.maxPackBytes, maxDownloadBytes: cfg.maxDownloadBytes, maxFileBytes: cfg.maxFileBytes, licenseAllow: cfg.licenseAllow, registries: cfg.registries, allowHosts: cfg.allowHosts }) }, "保存数值"),
+            h("input", {
+              style: { ...input, width: "90px" },
+              type: "number",
+              min: "16",
+              max: "4096",
+              value: limitDraft,
+              onChange: (e) => setLimitDraft(e.target.value),
+              onBlur: () => { if (!String(limitDraft).trim()) setLimitDraft(String(Math.round((cfg.maxPackBytes || 0) / 1048576))) },
+            }),
+            h("button", {
+              style: btn,
+              disabled: busy,
+              onClick: () => {
+                const mb = Math.round(Number(limitDraft))
+                if (!Number.isFinite(mb) || mb <= 0) { setSaved("请填一个 MB 数字（默认 256）"); return }
+                const bytes = Math.min(4096, Math.max(16, mb)) * 1048576
+                if (bytes !== mb * 1048576) setSaved("已按范围收到 16~4096 MB")
+                setField("maxPackBytes", bytes)
+                patch({ maxPackBytes: bytes, maxDownloadBytes: cfg.maxDownloadBytes, maxFileBytes: cfg.maxFileBytes, netTimeoutSeconds: cfg.netTimeoutSeconds, netRetries: cfg.netRetries, curlFallback: cfg.curlFallback !== false, licenseAllow: cfg.licenseAllow, registries: cfg.registries, allowHosts: cfg.allowHosts })
+              },
+            }, "保存数值"),
+            h("span", { style: hint }, "默认 256 MB，可填 16~4096"),
             saved ? h("span", { style: hint }, saved) : null)),
+          h("div", { style: row },
+            h("span", { style: label }, "网络超时（秒）"),
+            h("input", { style: { ...input, width: "70px" }, type: "number", min: "5", max: "120", value: String(cfg.netTimeoutSeconds || 20), onChange: (e) => setField("netTimeoutSeconds", Number(e.target.value)) }),
+            h("span", { style: label }, "重试"),
+            h("input", { style: { ...input, width: "56px" }, type: "number", min: "0", max: "5", value: String(cfg.netRetries || 0), onChange: (e) => setField("netRetries", Number(e.target.value)) }),
+            h(Switch, {
+              checked: cfg.curlFallback !== false,
+              label: "fetch 失败时用系统 curl 兜底",
+              onChange: (v) => { setField("curlFallback", v); patch({ curlFallback: v }) },
+            })),
+          h("div", { style: hint }, "registry 报 fetch failed / 超时，多半是代理或证书链：调大超时、加一次重试，或让 curl 兜底（走系统证书库）。保存后立即生效。"),
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
           h("div", { style: strong }, "信任清单"),
           h("div", { style: hint }, "允许的许可证（一行一个，例如 MIT）："),
