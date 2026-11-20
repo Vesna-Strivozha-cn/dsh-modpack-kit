@@ -6,63 +6,20 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { Readable } from 'node:stream'
 import plugin from '../index.js'
 
-const routes = new Map()
-const ctx = {
-  webServer: {
-    register(entry) {
-      routes.set(entry.path, entry.handler)
-      return () => routes.delete(entry.path)
-    },
-  },
-  get() { return undefined },
-  effect(fn) {
-    const dispose = fn()
-    return () => { try { dispose && dispose() } catch {} }
-  },
-}
+import { mountFakeHost } from '../dev/tools/fake-host.mjs'
 
-plugin.apply(ctx)
+// 假 ctx 里打包是同步 CPU 活，会在微任务里一口气跑完；延后 1200ms 开跑，
+// 才有窗口验证「跑着的任务不能被删 / 不能被清空」。
+const { call, callRaw } = mountFakeHost(plugin, { jobDelay: 1200 })
 
-function fakeRes() {
-  const state = { code: 200, headers: {}, chunks: [] }
-  return {
-    state,
-    set statusCode(v) { state.code = v },
-    get statusCode() { return state.code },
-    writeHead(code, headers) { state.code = code; Object.assign(state.headers, headers || {}) },
-    end(buf) { if (buf) state.chunks.push(Buffer.isBuffer(buf) ? buf : Buffer.from(String(buf))); state.done = true },
-  }
-}
-
-async function call(pathname, { method = 'GET', body = null, headers = {} } = {}) {
-  const handler = routes.get(pathname)
-  assert.ok(handler, 'route missing: ' + pathname)
-  const req = Readable.from(body === null ? [] : [Buffer.from(JSON.stringify(body))])
-  req.method = method
-  req.headers = { host: '127.0.0.1:51882', 'content-type': 'application/json', ...headers }
-  const res = fakeRes()
-  await handler(req, res)
-  const text = Buffer.concat(res.state.chunks).toString('utf8')
-  let data = null
-  try { data = JSON.parse(text) } catch {}
-  return { code: res.state.code, headers: res.state.headers, data, raw: Buffer.concat(res.state.chunks) }
-}
-
-async function callRaw(pathname, buffer, { method = 'POST' } = {}) {
-  const handler = routes.get(pathname)
-  assert.ok(handler, 'route missing: ' + pathname)
-  const req = Readable.from([buffer])
-  req.method = method
-  req.headers = { host: '127.0.0.1:51882', 'content-type': 'application/octet-stream' }
-  const res = fakeRes()
-  await handler(req, res)
-  const text = Buffer.concat(res.state.chunks).toString('utf8')
-  let data = null
-  try { data = JSON.parse(text) } catch {}
-  return { code: res.state.code, data, raw: Buffer.concat(res.state.chunks) }
+// 找一个「打包会明显花时间」的插件：默认按本机版打，小插件几十毫秒就完了，
+// 测「跑着的任务不能删 / 清空不能带走」时需要任务确实还在跑。
+const heavyPluginName = async () => {
+  const st = await call('/dsh-modpack-kit/api/status')
+  const names = (st.data.installed || []).map((p) => p.name)
+  return ['dsh-dafeiyu-life', 'dsh-plugin-wallpaper-engine', 'dsh-whale-widget', 'dsh-modpack-kit'].find((n) => names.includes(n)) || names[0]
 }
 
 const report = []
@@ -346,6 +303,16 @@ await step('catalog/lookup 按名查', async () => {
   assert.ok(r.data.items && typeof r.data.items === 'object')
 })
 
+await step('体积上限：保存 256 生效，手滑写 25600 会被夹回 4096', async () => {
+  const saved = await call('/dsh-modpack-kit/api/settings', { method: 'POST', body: { patch: { maxPackBytes: 256 * 1024 * 1024 } } })
+  assert.equal(saved.data.config.maxPackBytes, 256 * 1024 * 1024, '256 MB 应原样保存')
+  const huge = await call('/dsh-modpack-kit/api/settings', { method: 'POST', body: { patch: { maxPackBytes: 25600 * 1024 * 1024 } } })
+  assert.equal(huge.data.config.maxPackBytes, 4096 * 1024 * 1024, '超大值应被夹到 4096 MB')
+  const tiny = await call('/dsh-modpack-kit/api/settings', { method: 'POST', body: { patch: { maxPackBytes: 1 } } })
+  assert.equal(tiny.data.config.maxPackBytes, 16 * 1024 * 1024, '过小值应被抬到 16 MB')
+  await call('/dsh-modpack-kit/api/settings', { method: 'POST', body: { patch: { maxPackBytes: 256 * 1024 * 1024 } } })
+})
+
 await step('设置里能打开「装完直接启用」并回读', async () => {
   const on = await call('/dsh-modpack-kit/api/settings', { method: 'POST', body: { patch: { enableOnInstall: true } } })
   assert.equal(on.data.config.enableOnInstall, true, '设置应接受 enableOnInstall')
@@ -454,8 +421,8 @@ await step('跑着的任务不能删，只能先终止', async () => {
     method: 'POST',
     body: {
       async: true,
-      selection: [{ name: 'dsh-bili-account-bridge', source: 'profile' }],
-      options: { includePayload: true, name: '在跑烟测', confirmLicense: true },
+      selection: [{ name: '' + (await heavyPluginName()) + '', source: 'profile' }],
+      options: { includePayload: true, name: '在跑烟测', confirmLicense: true, acknowledge: true },
     },
   })
   const jobId = started.data.job.id
@@ -475,8 +442,8 @@ await step('清空进程：清掉收尾与失败的，跑着的留着；已完�
     method: 'POST',
     body: {
       async: true,
-      selection: [{ name: 'dsh-bili-account-bridge', source: 'profile' }],
-      options: { includePayload: false, name: '清空烟测', confirmLicense: true },
+      selection: [{ name: '' + (await heavyPluginName()) + '', source: 'profile' }],
+      options: { includePayload: false, name: '清空烟测', confirmLicense: true, acknowledge: true },
     },
   })
   const jobId = started.data.job.id
@@ -534,30 +501,32 @@ await step('清空进程：清掉收尾与失败的，跑着的留着；已完�
   assert.ok(!afterBroken.data.jobs.some((job) => job.id === brokenId), '清空后不该再有失败进程')
 })
 
-await step('异常任务及时清掉，正在跑的照常显示', async () => {
-  // 把「收尾记录留多久」压到 0：失败/取消的应该几秒内自己消失，不用人手点清空
+await step('任务记录默认留到重启；设置成秒数才自动清；正在跑的照常显示', async () => {
   const prev = await call('/dsh-modpack-kit/api/settings', { method: 'POST', body: { patch: { jobKeepSeconds: 0 } } })
-  assert.equal(prev.data.config.jobKeepSeconds, 0, 'jobKeepSeconds 允许为 0')
+  assert.equal(prev.data.config.jobKeepSeconds, 0, 'jobKeepSeconds 允许为 0（= 留到下次启动）')
   try {
     const broken = await call('/dsh-modpack-kit/api/install', {
       method: 'POST',
       body: { token: 'bogus-token-keep-zero', async: true, dryRun: true },
     })
     const brokenId = broken.data.job.id
-    let gone = false
+    let seen = false
     for (let i = 0; i < 40; i++) {
       const snap = await call('/dsh-modpack-kit/api/jobs')
-      if (!snap.data.jobs.some((job) => job.id === brokenId)) { gone = true; break }
+      if (snap.data.jobs.some((job) => job.id === brokenId)) { seen = true; break }
       await new Promise((resolve) => setTimeout(resolve, 150))
     }
-    assert.ok(gone, '失败的任务应该自己消失，不必手动清')
+    assert.ok(seen, '0 时要留在列表里（切页面、换入口不丢）')
+    await new Promise((resolve) => setTimeout(resolve, 1200))
+    const stillThere = await call('/dsh-modpack-kit/api/jobs')
+    assert.ok(stillThere.data.jobs.some((job) => job.id === brokenId), '0 时不该按时间自己消失')
 
     const running = await call('/dsh-modpack-kit/api/pack', {
       method: 'POST',
       body: {
         async: true,
-        selection: [{ name: 'dsh-bili-account-bridge', source: 'profile' }],
-        options: { includePayload: true, name: '在跑照常显示', confirmLicense: true },
+        selection: [{ name: '' + (await heavyPluginName()) + '', source: 'profile' }],
+        options: { includePayload: true, name: '在跑照常显示', confirmLicense: true, acknowledge: true },
       },
     })
     const runningId = running.data.job.id
@@ -574,7 +543,7 @@ await step('异常任务及时清掉，正在跑的照常显示', async () => {
       await new Promise((resolve) => setTimeout(resolve, 150))
     }
   } finally {
-    await call('/dsh-modpack-kit/api/settings', { method: 'POST', body: { patch: { jobKeepSeconds: 60 } } })
+    await call('/dsh-modpack-kit/api/settings', { method: 'POST', body: { patch: { jobKeepSeconds: 0 } } })
   }
 })
 
