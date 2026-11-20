@@ -13,8 +13,9 @@ import { normalizeManifest } from '../lib/manifest.mjs'
 import { checkCompatibility } from '../lib/compat.mjs'
 import { buildPack, PackRefused, captureConfigs } from '../lib/pack.mjs'
 import { inspectPackBuffer, installPack } from '../lib/install.mjs'
-import { DEFAULT_CONFIG } from '../lib/store.mjs'
+import { DEFAULT_CONFIG, clampConfig } from '../lib/store.mjs'
 import { listInstalled } from '../lib/profile.mjs'
+import { assertAllowedUrl, parseCurlResponse, NET_DEFAULTS } from '../lib/net.mjs'
 
 const results = []
 let failed = 0
@@ -120,7 +121,12 @@ test('扫描干净文件', () => {  const result = scanEntries([{ name: 'lib/cle
 
 // —— 默认配置 ——
 test('默认打包上限 512MB，进度窗位置不进配置', () => {
-  assertEqual(DEFAULT_CONFIG.maxPackBytes, 512 * 1024 * 1024)
+  assertEqual(DEFAULT_CONFIG.maxPackBytes, 256 * 1024 * 1024, '打包体积上限默认 256 MB')
+  // 手滑把体积上限写成 25600 MB（真实踩过）：会被夹回 4096 MB，而不是原样存下来
+  const clamped = clampConfig({ ...DEFAULT_CONFIG, maxPackBytes: 25600 * 1024 * 1024, maxFileBytes: 1024 * 1024 * 1024 })
+  assertEqual(clamped.maxPackBytes, 4096 * 1024 * 1024, '超大体积上限应被夹到 4096 MB')
+  assertEqual(clamped.maxFileBytes, 256 * 1024 * 1024, '超大单文件上限应被夹到 256 MB')
+  assertEqual(clampConfig({ ...DEFAULT_CONFIG, maxPackBytes: 1 }).maxPackBytes, 16 * 1024 * 1024, '过小的体积上限应被抬到 16 MB')
   // 单个下载仍是 256MB 的紧上限：能打 512MB 的包，不代表要一次吞下一个 512MB 的 tarball
   assertEqual(DEFAULT_CONFIG.maxDownloadBytes, 256 * 1024 * 1024)
   // 进度窗位置由界面拖动并记在浏览器本地，服务端配置里不该再有坐标字段
@@ -434,6 +440,52 @@ await testAsync('逐插件模式：local 带本机代码与配置快照', async 
   assert(result.buffer.includes(Buffer.from('export const a = 1')), '应带本机文件')
 })
 
+await testAsync('逐插件配置：插件预设不打配置，自定义配置带配置（市场版与本机版都适用）', async () => {
+  const { profileDir, installed } = await fixture()
+  const options = { includePayload: true, includeConfig: true, includeLocalEdits: true, confirmLicense: false, name: '配置选择包' }
+
+  // 本机版 + 插件预设：代码照打，但不带本机配置与数据快照
+  const preset = await buildPack({
+    selection: [{ name: 'demo-plugin', source: 'profile', mode: 'local', configMode: 'preset' }],
+    options,
+    context: packContext(baseConfig, profileDir, installed),
+  })
+  assertEqual(preset.manifest.plugins[0].configMode, 'preset')
+  assertEqual(preset.manifest.plugins[0].configIncluded, false, '插件预设不应带本机配置')
+  assertEqual(preset.manifest.plugins[0].dataIncluded, false, '插件预设不应带数据快照')
+  assert(!preset.buffer.includes(Buffer.from('configs/demo-plugin.json')), '包内不该有配置快照')
+
+  // 市场版 + 自定义配置：从 registry 取包，但带上本机这份插件的配置
+  const upstreamPkg = { name: 'demo-plugin', version: '1.2.3', license: 'MIT', dsh: { client: { platform: 'web' } } }
+  const download = async () => ({
+    pkg: upstreamPkg,
+    registry: 'https://registry.npmjs.org',
+    tarball: 'https://registry.npmjs.org/demo-plugin/-/demo-plugin-1.2.3.tgz',
+    integrity: 'sha512-x',
+    entries: [
+      { name: 'package.json', data: Buffer.from(JSON.stringify(upstreamPkg)) },
+      { name: 'index.js', data: Buffer.from('export function apply() { /* upstream */ }\n') },
+    ],
+  })
+  const custom = await buildPack({
+    selection: [{ name: 'demo-plugin', source: 'npm', spec: '1.2.3', configMode: 'custom', download }],
+    options,
+    context: packContext(baseConfig, profileDir, installed),
+  })
+  assertEqual(custom.manifest.plugins[0].source, 'npm')
+  assertEqual(custom.manifest.plugins[0].configMode, 'custom')
+  assertEqual(custom.manifest.plugins[0].configIncluded, true, '市场版选了自定义配置也要带本机配置')
+  assert(custom.buffer.includes(Buffer.from('configs/demo-plugin.json')), '包内应有配置快照')
+
+  // 市场版 + 插件预设：什么都不带
+  const marketPreset = await buildPack({
+    selection: [{ name: 'demo-plugin', source: 'npm', spec: '1.2.3', configMode: 'preset', download }],
+    options,
+    context: packContext(baseConfig, profileDir, installed),
+  })
+  assertEqual(marketPreset.manifest.plugins[0].configIncluded, false, '市场版选插件预设不该带配置')
+})
+
 await testAsync('逐插件模式：manifest 统一带 mode 字段', async () => {
   const { profileDir, installed } = await fixture()
   const result = await buildPack({
@@ -691,12 +743,18 @@ await testAsync('本机已装且有市场版时：勾选默认走市场版，避
   )
   const addAll = source.slice(source.indexOf('const addAllLocal'), source.indexOf('const clearSelected'))
   assert(addAll.includes('entrySource(entry)'), '「全部加入」也要按同一条默认规则走')
+  assert(addAll.includes('choice: "preset"'), '「全部加入」默认插件预设（优先插件默认配置）')
   assert(addAll.includes('entrySpec(entry)'), '「全部加入」也要按同一条默认规则取版本')
-  assert(source.includes('entry.hasMarket ? "已安装" : "本机"'), '列表里要标出「已安装」，用户才知道默认换成哪份')
+  assert(
+    source.includes('const sourceText = on ? (chosenSource === "npm" ? "市场版" : "本机版")'),
+    '每行最前面要标出当前选的是市场版还是本机版',
+  )
+  assert(source.includes('style: sourceStyle'), '来源徽标要渲染在每一行的最前面')
+  assert(!source.includes('市场 · 未装'), '行尾那块含糊的老标签要去掉')
   const switchBlock = source.slice(source.indexOf('const switchMarket'), source.indexOf('const addAllLocal'))
   assert(
-    switchBlock.includes('source: "profile", spec: entry.version || "", mode: "local"'),
-    '切回本机版要默认按「本地改动」打（本机版通常带着自己的配置或改动）',
+    switchBlock.includes('source: "profile", spec: entry.version || "", choice: "preset"'),
+    '切回本机版也要默认「插件预设」（优先插件默认配置）',
   )
 })
 
@@ -1004,6 +1062,134 @@ await testAsync('安装：本机版也有市场版时，按市场版装再把包
   assertEqual(action.source, 'market', '动作来源标成 market')
 })
 
+await testAsync('安装：市场版按 registry 装失败时，退回包里自带的那份并说明会显示成本地', async () => {
+  const fx = await fixture()
+  // 市场来源的完整包：载荷来自 registry（这里用假的 download 提供）
+  const packed = await buildPack({
+    selection: [{
+      name: 'demo-plugin',
+      source: 'npm',
+      spec: '1.2.3',
+      download: async () => ({
+        pkg: { name: 'demo-plugin', version: '1.2.3', license: 'MIT', dsh: { client: { platform: 'web' } } },
+        registry: 'https://registry.npmjs.org',
+        tarball: '',
+        integrity: '',
+        entries: [
+          { name: 'package.json', data: Buffer.from(JSON.stringify({ name: 'demo-plugin', version: '1.2.3', license: 'MIT' })) },
+          { name: 'index.js', data: Buffer.from('export function apply() {}\n') },
+        ],
+      }),
+    }],
+    options: { name: '断网包', includePayload: true, includeConfig: false },
+    context: packContext(baseConfig, fx.profileDir, fx.installed),
+  })
+  assertEqual(packed.manifest.plugins[0].source, 'npm', '这份来自市场')
+  const inspected = inspectPackBuffer(packed.buffer, { config: baseConfig, force: true })
+  const targetHome = tmpDir('market-registry-down')
+  const targetProfile = path.join(targetHome, 'profiles', 'desktop')
+  fs.mkdirSync(targetProfile, { recursive: true })
+  fs.writeFileSync(path.join(targetProfile, 'package.json'), JSON.stringify({
+    name: 'desktop', private: true, dependencies: {}, dsh: { profile: { bundles: [] } },
+  }, null, 2))
+  fs.writeFileSync(path.join(targetProfile, 'cordis.patch.yml'), '[]\n')
+  const specs = []
+  const run = await installPack({
+    manifest: inspected.manifest,
+    entries: inspected.entries,
+    config: baseConfig,
+    options: { applyConfig: false, keepLocal: false, enableBundles: false, deferExisting: false, force: true },
+    context: {
+      profileDir: targetProfile,
+      runCli: async (_profile, args) => {
+        const spec = args[args.length - 1]
+        specs.push(spec)
+        return { code: spec.startsWith('file:') ? 0 : 1, output: spec }
+      },
+    },
+  })
+  assertEqual(specs[0], 'demo-plugin@1.2.3', '先按清单里的版本号装市场版，实际：' + specs[0])
+  assert(String(specs[1] || '').startsWith('file:'), '失败后要退回包内副本，实际：' + specs[1])
+  assert(run.lines.some((line) => line.includes('改用包内自带的那份重试')), '要说明回退原因：' + JSON.stringify(run.lines))
+  assert(run.lines.some((line) => line.includes('显示成本地安装')), '要提醒市场会显示成本地：' + JSON.stringify(run.lines))
+})
+
+await testAsync('安装：市场来源的包不必再问 registry，也不会退回包内 file: 副本', async () => {
+  // 以前这里会先问一次 registry（msgs 之外还要一次网络）；离线或 registry 抖动时拿不到，
+  // 就退回包内副本，profile 里写成 file:，插件市场便把它显示成「本地安装」。
+  const targetHome = tmpDir('market-identity')
+  const targetProfile = path.join(targetHome, 'profiles', 'desktop')
+  fs.mkdirSync(targetProfile, { recursive: true })
+  fs.writeFileSync(path.join(targetProfile, 'package.json'), JSON.stringify({
+    name: 'desktop', private: true, dependencies: {}, dsh: { profile: { bundles: [] } },
+  }, null, 2))
+  fs.writeFileSync(path.join(targetProfile, 'cordis.patch.yml'), '[]\n')
+  const manifest = normalizeManifest({
+    schema: 1,
+    kind: 'dsh-modpack',
+    format: 'full',
+    createdAt: new Date().toISOString(),
+    name: '市场身份包',
+    plugins: [{ name: 'demo-plugin', version: '2.3.4', source: 'npm', dirName: 'demo-plugin' }],
+  })
+  const calls = []
+  const run = await installPack({
+    manifest,
+    entries: [],
+    config: baseConfig,
+    options: { applyConfig: false, keepLocal: false, enableBundles: false, deferExisting: false },
+    context: {
+      profileDir: targetProfile,
+      // registry 完全不可用：一次网络都不该发
+      resolveMarket: async () => { throw new Error('不该被调用：清单里已经有版本号') },
+      installBundle: async (spec) => {
+        calls.push(spec)
+        return { changed: true, stage: 'install', application: 'applied', target: spec }
+      },
+    },
+  })
+  assertEqual(calls[0], 'demo-plugin@2.3.4', '应当直接用清单里的版本号按市场安装，实际：' + calls[0])
+  assert(run.actions.every((a) => a.action !== 'install' || a.ok), '不该失败：' + JSON.stringify(run.actions))
+  assert(!run.lines.some((line) => line.includes('显示成本地安装')), '按市场装成时不该出现「本地」告警')
+})
+
+await testAsync('安装：市场来源退回包内副本时会明确提示「市场会显示成本地」', async () => {
+  const targetHome = tmpDir('market-fallback')
+  const targetProfile = path.join(targetHome, 'profiles', 'desktop')
+  fs.mkdirSync(targetProfile, { recursive: true })
+  fs.writeFileSync(path.join(targetProfile, 'package.json'), JSON.stringify({
+    name: 'desktop', private: true, dependencies: {}, dsh: { profile: { bundles: [] } },
+  }, null, 2))
+  fs.writeFileSync(path.join(targetProfile, 'cordis.patch.yml'), '[]\n')
+  const manifest = normalizeManifest({
+    schema: 1,
+    kind: 'dsh-modpack',
+    format: 'lite',
+    createdAt: new Date().toISOString(),
+    name: '回退包',
+    plugins: [{ name: 'demo-plugin', version: '', source: 'npm' }],
+  })
+  const run = await installPack({
+    manifest,
+    entries: [],
+    config: baseConfig,
+    options: { applyConfig: false, keepLocal: false, enableBundles: false, deferExisting: false },
+    context: {
+      profileDir: targetProfile,
+      resolveMarket: async () => null,
+      resolveSource: async () => {
+        const dir = path.join(targetHome, 'resolved', 'demo-plugin')
+        fs.mkdirSync(dir, { recursive: true })
+        fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'demo-plugin', version: '0.0.1' }))
+        return dir
+      },
+      runCli: async () => ({ code: 0, output: 'fake' }),
+    },
+  })
+  assertEqual(run.ok, true, '装包内副本本身应当成功')
+  assert(run.lines.some((line) => line.includes('显示成本地安装')), '回退到包内副本时要说明市场会显示成本地：' + JSON.stringify(run.lines))
+})
+
 await testAsync('安装：包里取自市场时，关掉「优先市场」也仍按市场版本装', async () => {
   const targetHome = tmpDir('market-source')
   const targetProfile = path.join(targetHome, 'profiles', 'desktop')
@@ -1183,9 +1369,48 @@ await testAsync('patch yml：同一个 id 有多条时改最后那条，并清�
   assert(!parsed[0].disabled, "被合并掉的那条 disabled 不该复活")
 })
 
+await testAsync('打包页草稿：勾选与选项留在内存里，切页签不丢；不落 localStorage', async () => {
+  const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert(source.includes('const packDraft = { value: { selected: null, options: null }'), '要有模块级草稿容器')
+  assert(source.includes('const [selected, setSelected] = useState(() =>'), '勾选状态要从草稿恢复')
+  assert(source.includes('setPackDraft({ selected })'), '勾选变化要写回草稿')
+  assert(source.includes('setPackDraft({ options })'), '打包选项变化也要写回草稿')
+  assert(!source.includes('localStorage.setItem("dsh-modpack-kit:draft'), '草稿不能落盘：重启 DSH 就该重置')
+})
+
 for (const [state, name, detail] of results) {
   if (state === 'ok') console.log('ok   ' + name)
   else console.log('FAIL ' + name + '\n' + detail)
 }
+
+test('网络层：只放 https，而且主机要在允许列表里', () => {
+  const config = { allowHosts: ['registry.npmjs.org', 'example.com'] }
+  assertAllowedUrl('https://registry.npmjs.org/dsh-modpack-kit', config)
+  assertAllowedUrl('https://cdn.registry.npmjs.org:443/x', config)
+  assertAllowedUrl('https://www.example.com/a', config)
+  let error = null
+  try { assertAllowedUrl('http://registry.npmjs.org/x', config) } catch (e) { error = e }
+  assert(error && /只允许 https/u.test(error.message), 'http 应被拒')
+  error = null
+  try { assertAllowedUrl('https://evil.test/x', config) } catch (e) { error = e }
+  assert(error && /不在允许列表/u.test(error.message), '白名单外主机应被拒')
+})
+
+test('网络层：curl 输出能拆出状态码、头与体', () => {
+  const parsed = parseCurlResponse(Buffer.from('HTTP/1.1 302 Found\r\nlocation: https://registry.npmjs.org/x\r\nset-cookie: a=1\r\n\r\nhello', 'latin1'))
+  assertEqual(parsed.status, 302)
+  assertEqual(parsed.headers.get('location'), 'https://registry.npmjs.org/x')
+  assertEqual(parsed.body.toString('utf8'), 'hello')
+})
+
+test('网络层：超时与重试有默认值，且被夹在合理范围', () => {
+  assertEqual(DEFAULT_CONFIG.netTimeoutSeconds, NET_DEFAULTS.timeoutMs / 1000)
+  assertEqual(DEFAULT_CONFIG.netRetries, NET_DEFAULTS.retries)
+  assertEqual(DEFAULT_CONFIG.curlFallback, true)
+  assertEqual(clampConfig({ ...DEFAULT_CONFIG, netTimeoutSeconds: 9999 }).netTimeoutSeconds, 120)
+  assertEqual(clampConfig({ ...DEFAULT_CONFIG, netTimeoutSeconds: 1 }).netTimeoutSeconds, 5)
+  assertEqual(clampConfig({ ...DEFAULT_CONFIG, netRetries: 99 }).netRetries, 5)
+})
+
 console.log('\n' + (results.length - failed) + '/' + results.length + ' 通过')
 process.exitCode = failed === 0 ? 0 : 1
