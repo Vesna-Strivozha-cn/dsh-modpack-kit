@@ -13,6 +13,7 @@ import { downloadPackage, npmMetadata, pickVersion, fetchLimited, relativeTime }
 import { buildPack, PackRefused } from './lib/pack.mjs'
 import { inspectPackBuffer, installPack, readPackFromUrl, InstallRefused } from './lib/install.mjs'
 import { checkCompatibility } from './lib/compat.mjs'
+import { readMarketGroups, groupViews } from './lib/groups.mjs'
 import { classifyPlugin } from './lib/classify.mjs'
 import { groupFindings } from './lib/scan.mjs'
 import { catalogSummary, searchCatalog, syncCatalog, categoryMapFor, lookupPlugins } from './lib/market-catalog.mjs'
@@ -58,6 +59,46 @@ export default {
       // 词条分类以插件市场为准；市场目录里没有的（本机私有插件）才退回本地猜测
       let marketCategories = {}
       try { marketCategories = categoryMapFor(config, installed.map((p) => p.name)) } catch {}
+      // 只列 profile 直接声明的插件；插件自带的内部子包由父包带进来，单独列出会被重复打包
+      const direct = installed.filter((p) => p.isPlugin && p.isDirect)
+      // 插件市场的分组（只读人家 profile 下的 state.json）：整理信息，不决定启用状态
+      let groups = []
+      let ungrouped = direct.map((p) => p.name)
+      let groupSource = 'none'
+      try {
+        const market = readMarketGroups(dir)
+        const views = groupViews(direct, market)
+        const byName = new Map(direct.map((p) => [p.name, p]))
+        const asPackPlugin = (p) => ({
+          name: p.name,
+          version: p.version,
+          peerDependencies: (p.pkg && p.pkg.peerDependencies) || {},
+          engines: (p.pkg && p.pkg.engines) || {},
+          license: (p.pkg && p.pkg.license) || '',
+          isBundle: p.isBundle === true,
+          hasClient: p.hasClient === true,
+          hasPatch: p.hasPatch === true,
+        })
+        const all = direct.map(asPackPlugin)
+        groups = views.groups.map((group) => {
+          let compat = { level: 'ok', errors: 0, warnings: 0, summary: '' }
+          try {
+            const result = checkCompatibility(group.members.map((name) => asPackPlugin(byName.get(name))), {
+              installed: all,
+              dshVersion: version,
+            })
+            compat = {
+              level: result.counts.error > 0 ? 'error' : result.counts.warn > 0 ? 'warn' : 'ok',
+              errors: result.counts.error,
+              warnings: result.counts.warn,
+              summary: result.summary,
+            }
+          } catch {}
+          return { name: group.name, members: group.members, missing: group.missing, compat }
+        })
+        ungrouped = views.ungrouped
+        groupSource = market.present ? 'market' : 'none'
+      } catch {}
       return {
         ok: !error,
         error,
@@ -81,7 +122,7 @@ export default {
         installedOrphans: installed.filter((p) => !p.isDirect && p.isOrphan).length,
         // 只列 profile 直接声明的插件；插件自带的内部子包（如壁纸引擎的 fonts/fx/glass…）由父包带进来，
         // 单独列出来会被重复打包、重复安装。
-        installed: installed.filter((p) => p.isPlugin && p.isDirect).map((p) => ({
+        installed: direct.map((p) => ({
           name: p.name,
           version: p.version,
           description: p.description || '',
@@ -92,6 +133,10 @@ export default {
           hasPatch: p.hasPatch,
           size: p.size,
         })),
+        // 插件市场的分组：只是「哪些插件一起看」的整理信息，默认勾选逻辑完全不变
+        groups,
+        ungrouped,
+        groupSource,
         market: (() => {
           const hit = installed.find((p) => p.name === 'dshmarket' || p.name === '@dsh-market/client')
           return { installed: Boolean(hit), name: hit ? hit.name : 'dshmarket', version: hit ? hit.version : '' }

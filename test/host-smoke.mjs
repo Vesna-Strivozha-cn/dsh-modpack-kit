@@ -38,6 +38,10 @@ await step('status 返回已装插件与配置', async () => {
   assert.ok(Array.isArray(r.data.installed) && r.data.installedTotal >= r.data.installed.length, 'installed 应是过滤后的插件列表')
   assert.ok(r.data.installed.every((p) => typeof p.category === 'string' && p.category), '每个已装插件都带分类')
   assert.ok(r.data.installed.every((p) => typeof p.description === 'string'), '每个已装插件都带描述')
+  assert.ok(Array.isArray(r.data.groups), 'status.groups 应该是数组')
+  assert.ok(Array.isArray(r.data.ungrouped), 'status.ungrouped 应该是数组')
+  assert.ok(r.data.groupSource === 'market' || r.data.groupSource === 'none', 'groupSource 只有两种')
+  assert.ok(r.data.groups.every((g) => typeof g.name === 'string' && Array.isArray(g.members)), '分组带名字与成员')
 })
 
 await step('settings 读回默认值', async () => {

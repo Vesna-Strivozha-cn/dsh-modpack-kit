@@ -99,6 +99,14 @@ data/<目录名>/**      插件数据快照（仅小体积文本；目录名取�
 
 插件市场判定「本地 / 线上」只看 profile `package.json` 的依赖规格：`file:` 与 `link:` 算本地，semver 算市场版（`dshmarket/lib/sources.js` 的 `isLocalSpec`）。安装器据此保证：清单里带版本号的市场来源插件直接用 `name@version` 装，不再先问 registry；轻量包把代码取回来之后也按 `name@version` 装，失败才退回 `file:<临时目录>`；退回包内副本时结果里会写明「插件市场会把它显示成本地安装」。
 
+## 分组（来自插件市场）
+
+- 读：`lib/groups.mjs` 的 `readMarketGroups(profileDir)` 只读 `<profile>/.dsh-market/state.json` 的 `groups` / `groupOrder` / `disabled`（市场没装、文件缺失、JSON 坏了都退回「没有分组」，绝不写人家的状态文件）。
+- 切：`groupViews(installed, market)` 把本机插件分成「组内」与「未分组」，成员里已经卸掉的放进 `missing`，不混进列表。
+- 报：`status` 多出三项——`groups: [{name, members, missing, compat}]`、`ungrouped`、`groupSource ('market' | 'none')`。`compat` 是拿该组成员跑一遍 `checkCompatibility`（本机已装、peer/engines/license 同一套规则），再压成 `{level: 'ok' | 'warn' | 'error', errors, warnings, summary}`。
+- 画：`client.js` 的 `PackPanel` 里 `sections`（useMemo）把行按分组切开，`renderList()` 输出「分组标题 + 展开后的成员行」，成员行与平铺时是同一个 `renderOne(entry)`，所以版本、来源、「插件预设 / 自定义配置」的行为完全一致；`folded` 只存在内存里，重启回到全部展开。搜索与分类视图仍是平铺（`active` 时不分组）。
+- 默认值：分组不改变任何默认勾选逻辑——新勾选仍是「插件预设」、市场来源仍按 `name@version`；「一键加入」只是批量调用同一套勾选逻辑。
+
 ## 安装顺序与「已装先跳过」
 
 安装与打包共用任务队列（`GET /jobs` 里 `kind: "install"`）：`POST /install { async: true }` 立即返回 job，进度由 `installPack` 的 `onProgress` 推进（8 检查已装 → 12~80 逐插件 → 84 登记启用清单 → 92 回填配置 → 100 完成）。

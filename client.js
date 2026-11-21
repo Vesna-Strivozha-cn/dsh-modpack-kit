@@ -782,6 +782,100 @@ window.__ModuleLoader__.load({
       })
       const clearSelected = () => setSelected({})
 
+      const groupInfo = (props.status && Array.isArray(props.status.groups)) ? props.status.groups : []
+      const [folded, setFolded] = useState({})
+      const sections = useMemo(() => {
+        if (groupInfo.length === 0) return []
+        const byName = new Map(localRows.map((entry) => [entry.name, entry]))
+        const used = new Set()
+        const out = []
+        for (const group of groupInfo) {
+          const entries = (group.members || []).map((name) => byName.get(name)).filter(Boolean)
+          for (const entry of entries) used.add(entry.name)
+          if (entries.length === 0) continue
+          out.push({ key: "group:" + group.name, name: group.name, entries, compat: group.compat || null, missing: group.missing || [] })
+        }
+        const rest = localRows.filter((entry) => !used.has(entry.name))
+        if (rest.length > 0) out.push({ key: "group:__rest", name: "未分组", entries: rest, compat: null, missing: [] })
+        return out
+      }, [localRows, groupInfo])
+      const addGroup = (section) => setSelected((prev) => {
+        const next = { ...prev }
+        for (const entry of section.entries) {
+          if (!next[entry.name]) next[entry.name] = { name: entry.name, source: entrySource(entry), spec: entrySpec(entry), choice: "preset" }
+        }
+        return next
+      })
+      const removeGroup = (section) => setSelected((prev) => {
+        const next = { ...prev }
+        for (const entry of section.entries) delete next[entry.name]
+        return next
+      })
+      const compatColor = (level) => (level === "error" ? "#ff6b6b" : level === "warn" ? "#ffb020" : "#2bb673")
+      const compatText = (compat) => (compat.level === "error"
+        ? "兼容：" + compat.errors + " 个问题"
+        : compat.level === "warn" ? "兼容：" + compat.warnings + " 条提醒" : "兼容")
+      const renderOne = (entry) => {
+              const on = Boolean(selected[entry.name])
+              const chosenSource = on ? selected[entry.name].source : (entry.installed === false ? "npm" : "profile")
+              const sourceText = on ? (chosenSource === "npm" ? "市场版" : "本机版") : (entry.installed === false ? "市场未装" : "已装")
+              const sourceStyle = on
+                ? { ...chip, minWidth: "58px", textAlign: "center", fontWeight: 600, color: "var(--dsw-alias-label-primary)", borderColor: "var(--dsw-alias-border-l2)" }
+                : { ...chip, minWidth: "58px", textAlign: "center", color: "var(--dsw-alias-label-tertiary)" }
+              return h("div", { key: entry.name, style: { display: "flex", gap: "8px", alignItems: "center", padding: "5px 2px", borderTop: "0.5px solid var(--dsw-alias-border-l2)", flexWrap: "wrap" } },
+                h("span", {
+                  style: sourceStyle,
+                  title: on
+                    ? (chosenSource === "npm" ? "当前选的是插件市场版：按上游版本取包，装出来和从市场装一样" : "当前选的是本机版：代码、配置条目与数据快照都取本机这份")
+                    : "还没勾选；勾上后默认按" + (entry.installed === false ? "市场版" : (entry.hasMarket ? "市场版" : "本机版")) + "打包",
+                }, sourceText),
+                h("input", { type: "checkbox", checked: on, onChange: () => toggle(entry) }),
+                h("div", { style: { flex: "1 1 220px", minWidth: "180px" } },
+                  h("div", { style: label }, entry.title || entry.name, " ", h("span", { style: hint }, "@" + (entry.version || "?"))),
+                  h("div", { style: hint }, (entry.description || "").slice(0, 110))),
+                h("span", { style: { ...chip, color: "var(--dsw-alias-label-tertiary)" } }, labelOf(categoryOf(entry))),
+                entry.updateAvailable ? h(Tag, { color: "#2bb673" }, "市场版 " + (entry.marketVersion || entry.version) + " 更新") : null,
+                on ? h("input", {
+                  style: { ...input, width: "120px" },
+                  placeholder: selected[entry.name].source === "npm" ? "版本，空=最新（从市场取包）" : "版本，空=本机版本",
+                  value: selected[entry.name].spec || "",
+                  onChange: (e) => setSpec(entry.name, e.target.value),
+                }) : null,
+                on ? h("div", { style: { display: "flex", gap: "4px" } },
+                  h("button", { style: selected[entry.name].choice !== "custom" ? chipOn : chipBtn, onClick: () => setChoice(entry.name, "preset"), title: "只打插件默认配置：不带本机的配置与数据快照（代码按所选来源）" }, "插件预设"),
+                  h("button", { style: selected[entry.name].choice === "custom" ? chipOn : chipBtn, onClick: () => setChoice(entry.name, "custom"), title: "带上本机这份插件的配置与数据快照；本机来源的连代码改动一起打" }, "自定义配置")) : null,
+                entry.hasMarket && entry.source === "profile" && on ? h("button", {
+                  style: { ...chipBtn, border: "none", fontSize: "10.5px", color: "var(--dsw-alias-label-tertiary)" },
+                  onClick: () => switchMarket(entry, selected[entry.name].source !== "npm"),
+                  title: "改用插件市场发的同名版本（上游原版代码 + 默认配置），装出来和从市场装一样",
+                }, selected[entry.name].source === "npm" ? "改为本机版" : "改为市场版") : null)}
+
+      const renderList = () => {
+        if (active || sections.length === 0) return rows.map(renderOne)
+        const out = []
+        for (const section of sections) {
+          const onCount = section.entries.filter((entry) => Boolean(selected[entry.name])).length
+          const isFolded = folded[section.name] === true
+          out.push(h("div", {
+            key: section.key,
+            style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap", padding: "7px 2px", borderTop: "0.5px solid var(--dsw-alias-border-l2)" },
+          },
+          h("button", {
+            style: { ...chipBtn, border: "none", padding: "0 4px", fontSize: "12px", color: "var(--dsw-alias-label-secondary)" },
+            onClick: () => setFolded((prev) => ({ ...prev, [section.name]: !isFolded })),
+            title: isFolded ? "展开「" + section.name + "」" : "收起「" + section.name + "」",
+          }, isFolded ? "▸" : "▾"),
+          h("div", { style: { flex: "1 1 200px", minWidth: "160px" } },
+            h("div", { style: label }, section.name, " ", h("span", { style: hint }, section.entries.length + " 个" + (onCount > 0 ? " · 已选 " + onCount : ""))),
+            section.missing.length > 0 ? h("div", { style: hint }, "有 " + section.missing.length + " 个成员已不在本机") : null),
+          section.compat ? h(Tag, { color: compatColor(section.compat.level) }, compatText(section.compat)) : null,
+          h("button", { style: btn, onClick: () => addGroup(section), title: "把这一组的插件都加入选择（默认插件预设，可逐个改）" }, "一键加入"),
+          onCount > 0 ? h("button", { style: btn, onClick: () => removeGroup(section) }, "清空本组") : null))
+          if (!isFolded) for (const entry of section.entries) out.push(renderOne(entry))
+        }
+        return out
+      }
+
       const [jobMsg, setJobMsg] = useState("")
       const pausedJobs = (props.jobs || []).filter((job) => job.kind === "pack" && job.status === "paused" && job.risk)
 
@@ -956,41 +1050,7 @@ window.__ModuleLoader__.load({
           h("div", { style: { display: "flex", flexDirection: "column", gap: "3px", maxHeight: "320px", overflow: "auto" } },
             rows.length === 0
               ? h("div", { style: hint }, loading ? "读取中…" : active ? (searching ? "搜索中…" : "无匹配条目") : "本机尚未安装插件")
-              : rows.map((entry) => {
-              const on = Boolean(selected[entry.name])
-              const chosenSource = on ? selected[entry.name].source : (entry.installed === false ? "npm" : "profile")
-              const sourceText = on ? (chosenSource === "npm" ? "市场版" : "本机版") : (entry.installed === false ? "市场未装" : "已装")
-              const sourceStyle = on
-                ? { ...chip, minWidth: "58px", textAlign: "center", fontWeight: 600, color: "var(--dsw-alias-label-primary)", borderColor: "var(--dsw-alias-border-l2)" }
-                : { ...chip, minWidth: "58px", textAlign: "center", color: "var(--dsw-alias-label-tertiary)" }
-              return h("div", { key: entry.name, style: { display: "flex", gap: "8px", alignItems: "center", padding: "5px 2px", borderTop: "0.5px solid var(--dsw-alias-border-l2)", flexWrap: "wrap" } },
-                h("span", {
-                  style: sourceStyle,
-                  title: on
-                    ? (chosenSource === "npm" ? "当前选的是插件市场版：按上游版本取包，装出来和从市场装一样" : "当前选的是本机版：代码、配置条目与数据快照都取本机这份")
-                    : "还没勾选；勾上后默认按" + (entry.installed === false ? "市场版" : (entry.hasMarket ? "市场版" : "本机版")) + "打包",
-                }, sourceText),
-                h("input", { type: "checkbox", checked: on, onChange: () => toggle(entry) }),
-                h("div", { style: { flex: "1 1 220px", minWidth: "180px" } },
-                  h("div", { style: label }, entry.title || entry.name, " ", h("span", { style: hint }, "@" + (entry.version || "?"))),
-                  h("div", { style: hint }, (entry.description || "").slice(0, 110))),
-                h("span", { style: { ...chip, color: "var(--dsw-alias-label-tertiary)" } }, labelOf(categoryOf(entry))),
-                entry.updateAvailable ? h(Tag, { color: "#2bb673" }, "市场版 " + (entry.marketVersion || entry.version) + " 更新") : null,
-                on ? h("input", {
-                  style: { ...input, width: "120px" },
-                  placeholder: selected[entry.name].source === "npm" ? "版本，空=最新（从市场取包）" : "版本，空=本机版本",
-                  value: selected[entry.name].spec || "",
-                  onChange: (e) => setSpec(entry.name, e.target.value),
-                }) : null,
-                on ? h("div", { style: { display: "flex", gap: "4px" } },
-                  h("button", { style: selected[entry.name].choice !== "custom" ? chipOn : chipBtn, onClick: () => setChoice(entry.name, "preset"), title: "只打插件默认配置：不带本机的配置与数据快照（代码按所选来源）" }, "插件预设"),
-                  h("button", { style: selected[entry.name].choice === "custom" ? chipOn : chipBtn, onClick: () => setChoice(entry.name, "custom"), title: "带上本机这份插件的配置与数据快照；本机来源的连代码改动一起打" }, "自定义配置")) : null,
-                entry.hasMarket && entry.source === "profile" && on ? h("button", {
-                  style: { ...chipBtn, border: "none", fontSize: "10.5px", color: "var(--dsw-alias-label-tertiary)" },
-                  onClick: () => switchMarket(entry, selected[entry.name].source !== "npm"),
-                  title: "改用插件市场发的同名版本（上游原版代码 + 默认配置），装出来和从市场装一样",
-                }, selected[entry.name].source === "npm" ? "改为本机版" : "改为市场版") : null)
-            })),
+              : renderList()),
           active && search.hasMore ? h("div", { style: row },
             h("button", { style: btn, disabled: searching, onClick: loadMore }, searching ? "加载中…" : ("加载更多（还有 " + Math.max(0, search.total - rows.length) + " 条）"))) : null,
           h("div", { style: hint }, active

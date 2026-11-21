@@ -16,6 +16,7 @@ import { inspectPackBuffer, installPack } from '../lib/install.mjs'
 import { DEFAULT_CONFIG, clampConfig } from '../lib/store.mjs'
 import { listInstalled } from '../lib/profile.mjs'
 import { assertAllowedUrl, parseCurlResponse, NET_DEFAULTS } from '../lib/net.mjs'
+import { readMarketGroups, groupViews } from '../lib/groups.mjs'
 
 const results = []
 let failed = 0
@@ -721,7 +722,19 @@ await testAsync('客户端组件在假 React 下能渲染（抓未定义变量�
     placements: { settings: true, sidebar: true, pluginsTab: false },
     market: { installed: false },
   }
+  const grouped = {
+    ...status,
+    installed: [
+      { name: 'a-plugin', version: '1.0.0', description: 'A', category: 'tools', hasClient: true, hasPatch: false, isBundle: true },
+      { name: 'b-plugin', version: '2.0.0', description: 'B', category: 'tools', hasClient: true, hasPatch: false, isBundle: true },
+    ],
+    installedTotal: 2,
+    groups: [{ name: 'bili', members: ['a-plugin'], missing: ['gone-plugin'], compat: { level: 'warn', errors: 0, warnings: 2, summary: '可以装，但有 2 个提醒' } }],
+    ungrouped: ['b-plugin'],
+    groupSource: 'market',
+  }
   render(mod.Home({ status }))
+  render(mod.Home({ status: grouped }))
   render(mod.Icon({ size: 16 }))
   render(mod.Page({}))
   for (const tab of ['install', 'settings']) {
@@ -1410,6 +1423,46 @@ test('网络层：超时与重试有默认值，且被夹在合理范围', () =>
   assertEqual(clampConfig({ ...DEFAULT_CONFIG, netTimeoutSeconds: 9999 }).netTimeoutSeconds, 120)
   assertEqual(clampConfig({ ...DEFAULT_CONFIG, netTimeoutSeconds: 1 }).netTimeoutSeconds, 5)
   assertEqual(clampConfig({ ...DEFAULT_CONFIG, netRetries: 99 }).netRetries, 5)
+})
+
+test('市场分组：读人家的 state.json，缺失就当作没有分组', () => {
+  const home = tmpDir('groups-home')
+  const profile = path.join(home, 'profiles', 'desktop')
+  fs.mkdirSync(path.join(profile, '.dsh-market'), { recursive: true })
+  fs.writeFileSync(path.join(profile, '.dsh-market', 'state.json'), JSON.stringify({
+    groups: { bili: ['a', 'b', 'ghost', 'a'], other: [] },
+    groupOrder: ['bili', 'missing', 'other'],
+    disabled: ['a', 'a'],
+  }))
+  const market = readMarketGroups(profile)
+  assertEqual(market.present, true)
+  assertEqual(market.order.join(','), 'bili,other')
+  assertEqual(market.groups.bili.join(','), 'a,b,ghost')
+  assertEqual(market.disabled.join(','), 'a')
+  assertEqual(readMarketGroups(path.join(home, 'nope')).present, false)
+  fs.writeFileSync(path.join(profile, '.dsh-market', 'state.json'), 'not json')
+  assertEqual(readMarketGroups(profile).present, false)
+})
+
+test('市场分组：成员分成本机有与没有的，其余进未分组', () => {
+  const market = { present: true, order: ['bili'], groups: { bili: ['a', 'ghost'] }, disabled: [] }
+  const view = groupViews([{ name: 'a' }, { name: 'c' }], market)
+  assertEqual(view.groups.length, 1)
+  assertEqual(view.groups[0].members.join(','), 'a')
+  assertEqual(view.groups[0].missing.join(','), 'ghost')
+  assertEqual(view.ungrouped.join(','), 'c')
+  assertEqual(groupViews([{ name: 'a' }], { present: false, order: [], groups: {}, disabled: [] }).ungrouped.join(','), 'a')
+})
+
+test('选插件界面：分组可折叠、可一键加入、带兼容标记', () => {
+  const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  for (const mark of ['const sections = useMemo', 'const renderList = () =>', '一键加入', '清空本组', '兼容：', 'folded[section.name]', 'renderOne(entry)']) {
+    assert(source.includes(mark), 'client.js 应包含 ' + mark)
+  }
+  const host = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  assert(host.includes("from './lib/groups.mjs'"), 'index.js 应导入 groups 模块')
+  assert(host.includes('groupViews('), 'index.js 应用 groupViews')
+  assert(host.includes('groupSource = market.present'), 'index.js 应记录分组来源')
 })
 
 console.log('\n' + (results.length - failed) + '/' + results.length + ' 通过')
