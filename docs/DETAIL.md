@@ -48,7 +48,15 @@ configs/<name>.json   抓到的配置条目
 data/<目录名>/**      插件数据快照（小体积文本）
 ```
 
-文件名 `<包名>-<日期>-<full|lite>.dshpack`。完整版先去 `~/.dsh/dsh-modpack/vendor/<包>-<hash>/` 再登记，删了解压目录也不会断。
+文件名 `<包名>-<日期>-<full|lite|hybrid>.dshpack`。
+
+| 策略 | 进包的内容 | 安装时 |
+| --- | --- | --- |
+| `full` | 清单 + `plugins/` + 配置 + 数据 + 报告 + 安装器 | 先去 `~/.dsh/dsh-modpack/vendor/<包>-<hash>/` 再登记，删了解压目录也不会断 |
+| `lite` | 清单 + 版本号 + 报告（无 `plugins/`、无配置） | 按 `名字@版本` 从 npm 取包，代码直接进内存扫描，不落临时目录 |
+| `hybrid` | 清单 + 版本号 + 配置/数据/补丁片段（无 `plugins/`） | 同 `lite`，装完再按条目回填配置 |
+
+三种策略都带 `install/` 独立安装器；`lite`/`hybrid` 里没有代码，安装时必须联网。
 
 ## 配置与数据
 
@@ -62,6 +70,7 @@ data/<目录名>/**      插件数据快照（小体积文本）
 
 - 目录：读市场自己的 `dsh-plugin-catalog`（CDN `index.json` 优先，失败退 npm tarball）；分区名与条目数跟市场一致，索引落在 `<DSH_HOME>/dsh-modpack/catalog/market.json`。
 - 市场判定只看依赖写法：`file:` / `link:` 算本地，semver 算市场版。所以市场来源的插件一律 `名字@版本` 装。
+- 完整包的安装优先级（方案 A）：清单里有确定版本时先按 `名字@版本` 装（`install.mjs` 的 `preferMarketSpec`），成功则 profile 依赖是 `^版本`、市场显示市场版；失败或离线才 `installSpec("file:" + dir)` 退回包内副本，依赖变 `file:`、市场显示本地安装，结果里明确提示。`options.preferMarket === false` 可整段关掉这条优先级。
 - 没装市场：打包、装包、强制检测、完整性/兼容/许可证校验、配置回填、三处入口都照常，只少 Discover 界面与目录搜索（建一次索引即恢复）。
 - 分组：`readMarketGroups` 只读不写；`applyMarketGroups` 在安装时做「同名组并成员、新组追加、其它键原样保留」；目标没装市场（没有 `.dsh-market`）就不写，只说明一句。
 
@@ -73,6 +82,8 @@ data/<目录名>/**      插件数据快照（小体积文本）
 - 悬浮进度窗：左下角起，按住标题可拖，位置存 `localStorage`（`dsh-modpack-kit:dock-pos`）；没任务自动收起，只留「进度」按钮唤出。标题栏按钮与拖动不共享判定（`closest("button")` 直接返回）。
 - 收尾：`jobKeepSeconds` 默认 0（留到重启或手动清）；正数按秒清，失败/取消取 `min(该值, 15 秒)`；心跳超 10 分钟的 running 先判失败再清走；`paused` 永不自动清。
 - 完成任务可点「下载安装包」：切到打包页、回填结果并滚到下载区；结果存在客户端缓存里，切页签不丢。
+- 安装预览：逐插件勾选（未勾的作为 `options.only` 的补集排除）、有问题的插件置顶（`compat.findings` 里 `level !== "info"` 的条目按插件分组显示）、每个带配置的插件可选「包内配置 / 保持本机」（`options.configChoice[name] = "pack" | "local"`）、「装后整体启用」（`enableBundles`）与「装后同步市场分组」（`options.syncGroups`，默认开）。
+- 策略可用性：`POST /pack/plan` 返回三张卡片能否选与原因（缺 semver 版本的插件让 `lite`/`hybrid` 灰掉；本机没有代码的市场插件会在 `full` 的说明里提示打包时要联网取一次）。
 - 体积上限：`maxPackBytes` 默认 512 MB（16~4096），单个下载 `maxDownloadBytes` 默认 256 MB；允许同时打多个包。
 
 ## 网络层（`lib/net.mjs`）

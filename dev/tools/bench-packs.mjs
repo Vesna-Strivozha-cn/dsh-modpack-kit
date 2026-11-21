@@ -124,14 +124,14 @@ const timed = async (label, fn) => {
 console.log('\n== 1/3 完整包（现状：带源码）')
 const full = await timed('full', () => buildPack({
   selection: selection.map(({ localSize, ...rest }) => rest),
-  options: { ...common, includePayload: true },
+  options: { ...common, strategy: 'full' },
   context,
 }))
 
 console.log('\n== 2/3 轻量包（只记版本）')
 const lite = await timed('lite', () => buildPack({
   selection: selection.map(({ localSize, ...rest }) => rest),
-  options: { ...common, includePayload: false },
+  options: { ...common, strategy: 'lite' },
   context,
 }))
 

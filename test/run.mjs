@@ -1422,9 +1422,55 @@ await testAsync('安装：宿主有插件管理器时走服务，不再调命令
   })
   assertEqual(run.ok, true)
   assertEqual(managerCalls.length, 1, '应该只调用一次插件管理器')
-  assert(managerCalls[0].spec.startsWith('file:'), '本地插件应交给管理器 file: 路径，实际：' + managerCalls[0].spec)
+  assert(managerCalls[0].spec === 'demo-plugin@1.2.3', '完整包应先按市场版本交给管理器（依赖写成 ^版本，市场才认市场版），实际：' + managerCalls[0].spec)
   assertEqual(cliCalls, 0, '走管理器时不该再调命令行')
   assertEqual(run.needsRestart, true, '管理器说要重启，结果也要说要重启')
+})
+
+await testAsync('打包策略：完整包带本体，轻量包只记版本，混合包带版本与配置', async () => {
+  const { profileDir, installed } = await fixture()
+  const base = { selection: [{ name: 'demo-plugin', source: 'profile', mode: 'local' }], config: { ...DEFAULT_CONFIG }, context: { profileDir, installed, dshVersion: '1.0.0', parsePatch: (t) => parseYaml(t), patchText: '[]\n' } }
+  const full = await buildPack({ ...base, options: { confirmLicense: true, strategy: 'full' } })
+  const lite = await buildPack({ ...base, options: { confirmLicense: true, strategy: 'lite' } })
+  const hybrid = await buildPack({ ...base, options: { confirmLicense: true, strategy: 'hybrid' } })
+  assertEqual(full.manifest.format, 'full')
+  assertEqual(lite.manifest.format, 'lite')
+  assertEqual(hybrid.manifest.format, 'hybrid')
+  const fullNames = readZip(full.buffer).map((e) => e.name)
+  const liteNames = readZip(lite.buffer).map((e) => e.name)
+  const hybridNames = readZip(hybrid.buffer).map((e) => e.name)
+  assert(fullNames.some((n) => n.startsWith('plugins/')), '完整包应带插件本体')
+  assert(!liteNames.some((n) => n.startsWith('plugins/')), '轻量包不该带插件本体')
+  assert(!hybridNames.some((n) => n.startsWith('plugins/')), '混合包不带插件本体')
+  assert(hybrid.size > lite.size, '混合包比轻量包大一点（多带配置/数据/清单）')
+})
+
+test('策略可用性：没有确定版本号的插件不能选轻量包与混合包', () => {
+  const src = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  assert(src.includes("id: 'lite'"), '应有轻量包策略描述')
+  assert(src.includes("id: 'hybrid'"), '应有混合包策略描述')
+  assert(src.includes('这些插件没有确定的版本号'), '不可选时要给出原因')
+  assert(src.includes("/dsh-modpack-kit/api/pack/plan"), '应有策略可用性路由')
+  assert(src.includes('strategy: (() => {'), '打包时应透传 strategy')
+})
+
+test('打包界面：策略三选一、安全检查勾选已隐藏、版本号只读', () => {
+  const src = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert(src.includes('STRATEGY_INFO'), '应有三策略卡片说明')
+  assert(src.includes('/pack/plan'), '界面应向服务端问策略可用性')
+  assert(!src.includes('包含插件本体（关=轻量版）'), '懒人/轻量勾选应已删除')
+  assert(!src.includes('打包前安全检测（强制）'), '安全检查勾选应隐藏')
+  assert(!src.includes('onChange: (e) => setSpec(entry.name, e.target.value)'), '版本号不该能手改')
+})
+
+test('安装预览：逐插件勾选、问题优先、分组同步与整体启用选项都在', () => {
+  const src = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert(src.includes('const previewRows ='), '应算出按问题排序的预览行')
+  assert(src.includes('.sort((a, b) => (b.problems.length > 0 ? 1 : 0) - (a.problems.length > 0 ? 1 : 0))'), '有问题的插件应排前面')
+  assert(src.includes('安装后整体启用'), '应有整体启用开关')
+  assert(src.includes('安装后同步插件市场分组'), '应有分组同步开关')
+  assert(src.includes('包内配置'), '每个插件可选包内配置')
+  assert(src.includes('保持本机'), '每个插件可选保持本机配置')
 })
 
 await testAsync('安装：插件管理器报错时自动退回命令行', async () => {

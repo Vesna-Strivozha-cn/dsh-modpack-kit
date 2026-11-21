@@ -33,7 +33,13 @@ window.__ModuleLoader__.load({
     const chipOn = { ...chipBtn, color: "var(--dsw-alias-label-primary)", borderColor: "var(--dsw-alias-fill-primary, #3b6cf6)" }
 
     const LEVEL_COLOR = { high: "#ff6b6b", error: "#ff6b6b", medium: "#ffb020", warn: "#ffb020", low: "#8a8f98", info: "#8a8f98" }
-    const FORMAT_TEXT = { full: "完整版（含插件本体）", lite: "轻量版（联网取包）" }
+    const FORMAT_TEXT = { full: "完整版（含插件本体）", lite: "轻量版（联网取包）", hybrid: "混合包（联网取包 + 配置）" }
+    // 三种打包策略的介绍：服务端 /pack/plan 会给可用性与不可用原因，这里只做兜底展示
+    const STRATEGY_INFO = [
+      { id: "full", title: "完整包（懒人包）", online: false, note: "插件本体一起装进包，不联网也能装。有网时按市场版本装，装完依赖是 ^版本，插件市场认成市场版；离线才退回包内副本（显示本地安装）。可以带自定义配置与数据。" },
+      { id: "lite", title: "仅下载码（轻量包）", online: true, note: "只记 名字@版本，体积最小。安装时必须联网从市场取包，不带自定义配置与数据，插件市场按版本认成市场版。" },
+      { id: "hybrid", title: "混合包", online: true, note: "只带版本号 + 配置/数据/补丁片段，体积接近仅下载码，但自定义配置照样能带。安装时联网取代码，装完同样是市场版。" },
+    ]
     // 分类以插件市场为准：id 与市场目录一致，中文名由 host 从市场目录里带回来。
     const CATEGORY_LABELS = { all: "全部", other: "其它" }
     const categoryOf = (entry) => (entry && entry.category) || "other"
@@ -612,7 +618,7 @@ window.__ModuleLoader__.load({
       const [searching, setSearching] = useState(false)
       const [syncing, setSyncing] = useState("")
       const [options, setOptions] = useState(() => (draft.options ? { ...draft.options } : {
-        includePayload: true,
+        strategy: "full",
         includeConfig: true,
         scanBeforePack: true,
         confirmLicense: false,
@@ -620,6 +626,17 @@ window.__ModuleLoader__.load({
         description: "",
         author: "",
       }))
+      // 三种策略的可选性随所选插件变化（比如只在本机、没有 semver 版本的插件选不了轻量包）
+      const [plan, setPlan] = useState(null)
+      useEffect(() => {
+        const names = Object.keys(selected)
+        if (names.length === 0) { setPlan(null); return undefined }
+        let alive = true
+        api("/pack/plan", { selection: names.map((name) => selected[name]) })
+          .then((data) => { if (alive && data && data.ok && Array.isArray(data.strategies)) setPlan(data.strategies) })
+          .catch(() => { if (alive) setPlan(null) })
+        return () => { alive = false }
+      }, [selected])
       // 草稿只活在内存里：切页签不丢，刷新/重启 DSH 回到默认
       useEffect(() => { setPackDraft({ selected }) }, [selected])
       useEffect(() => { setPackDraft({ options }) }, [options])
@@ -832,12 +849,10 @@ window.__ModuleLoader__.load({
                   h("div", { style: hint }, (entry.description || "").slice(0, 110))),
                 h("span", { style: { ...chip, color: "var(--dsw-alias-label-tertiary)" } }, labelOf(categoryOf(entry))),
                 entry.updateAvailable ? h(Tag, { color: "#2bb673" }, "市场版 " + (entry.marketVersion || entry.version) + " 更新") : null,
-                on ? h("input", {
-                  style: { ...input, width: "120px" },
-                  placeholder: selected[entry.name].source === "npm" ? "版本，空=最新（从市场取包）" : "版本，空=本机版本",
-                  value: selected[entry.name].spec || "",
-                  onChange: (e) => setSpec(entry.name, e.target.value),
-                }) : null,
+                on ? h("span", { style: { ...chip, color: "var(--dsw-alias-label-secondary)", fontWeight: 600 } },
+                  "版本 " + (selected[entry.name].source === "npm"
+                    ? (entry.marketVersion || (selected[entry.name].spec || "").replace(/^[^@]+@/u, "") || entry.version || "最新")
+                    : (entry.version || "本机"))) : null,
                 on ? h("div", { style: { display: "flex", gap: "4px" } },
                   h("button", { style: selected[entry.name].choice !== "custom" ? chipOn : chipBtn, onClick: () => setChoice(entry.name, "preset"), title: "只打插件默认配置：不带本机的配置与数据快照（代码按所选来源）" }, "插件预设"),
                   h("button", { style: selected[entry.name].choice === "custom" ? chipOn : chipBtn, onClick: () => setChoice(entry.name, "custom"), title: "带上本机这份插件的配置与数据快照；本机来源的连代码改动一起打" }, "自定义配置")) : null,
@@ -931,7 +946,7 @@ window.__ModuleLoader__.load({
             async: true,
             selection: picked.map((name) => selected[name]),
             options: {
-              includePayload: options.includePayload,
+              strategy: options.strategy,
               includeConfig: options.includeConfig,
               acknowledge: ack === true,
               force: false,
@@ -1014,7 +1029,7 @@ window.__ModuleLoader__.load({
       return h("div", { style: { display: "flex", flexDirection: "column", gap: "14px" } },
         h(Notice, null,
           h("b", null, "打包：将所选插件封装为一个 .dshpack 文件"),
-          "　完整版包含插件本体的全部文件；轻量版仅记录插件名称与版本，安装时按版本从插件市场下载。两种包在安装前均不修改 profile 内容。",
+          "　三种策略：完整包自带插件本体、不联网也能装；仅下载码只记版本、体积最小；混合包带版本与配置片段、体积接近仅下载码。完整包与混合包在安装前均不允许修改 profile 内容。",
           status && status.market && status.market.installed
             ? h("div", { style: { ...hint, marginTop: "6px" } }, "已检测到插件市场 v" + status.market.version + "：本插件与其共用目录源与安装链路，但不依赖该插件，移除后打包与安装功能不受影响。")
             : h("div", { style: { ...hint, marginTop: "6px" } }, "未检测到插件市场，功能不受影响：打包、安装与检测均在本地完成。建议先安装 dshmarket 以获得分类、搜索与「切换市场版」入口；未安装时，首次使用请点击「建立目录索引」。"),
@@ -1055,9 +1070,27 @@ window.__ModuleLoader__.load({
         ),
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
           h("div", { style: strong }, "包选项"),
-          h("div", { style: { ...row, rowGap: "6px" } },
-            h(Switch, { checked: options.includePayload, label: "包含插件本体（关=轻量版）", onChange: (v) => setOptions({ ...options, includePayload: v }) }),
-            h(ForcedSwitch, { label: "打包前安全检测（强制）", onNag: () => firePackNag("你想干什么") })),
+          h("div", { style: hint }, "打包策略（三选一）：安全检测在服务端强制进行，不提供关闭；版本号不能手改，只显示所选来源的版本。"),
+          h("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap" } },
+            (plan && plan.length ? plan : STRATEGY_INFO).map((item) => h("div", {
+              key: item.id,
+              role: "button",
+              style: {
+                flex: "1 1 210px", minWidth: "190px", padding: "9px 10px", borderRadius: "8px",
+                cursor: item.ok === false ? "not-allowed" : "pointer",
+                border: "1px solid " + (options.strategy === item.id ? "#4C7DF0" : "var(--dsw-alias-border-l2)"),
+                background: options.strategy === item.id ? "rgba(76,125,240,0.08)" : "transparent",
+                opacity: item.ok === false ? 0.55 : 1,
+              },
+              onClick: () => {
+                if (item.ok === false) { firePackNag(item.reason || "这个策略现在不能选"); return }
+                setOptions({ ...options, strategy: item.id })
+              },
+              title: item.ok === false ? (item.reason || "") : (item.online ? "安装时需要联网" : "不联网也能装"),
+            },
+              h("div", { style: { fontWeight: 600, display: "flex", gap: "6px", alignItems: "baseline" } }, item.title,
+                h("span", { style: hint }, item.online ? "需联网" : "不联网")),
+              h("div", { style: { ...hint, marginTop: "4px", lineHeight: 1.45 } }, item.ok === false ? (item.reason || "") : (item.note || ""))))),
           h(NagText, { text: packNag }),
           h("div", { style: { ...row, rowGap: "6px" } },
             h("input", { style: { ...input, flex: "1 1 200px" }, placeholder: "整合包名", value: options.name, onChange: (e) => setOptions({ ...options, name: e.target.value }) }),
@@ -1115,6 +1148,9 @@ window.__ModuleLoader__.load({
       // 安装也走任务队列：进度直接显示在左下角那个窗里，这里留一份给页面内看
       const [progress, setProgress] = useState(null)
       const [deferred, setDeferred] = useState([])
+      // 预览里逐个插件勾选要不要装、以及每个插件「包内配置 / 保持本机」
+      const [pickedNames, setPickedNames] = useState({})
+      const [configChoice, setConfigChoice] = useState({})
       const [askReplace, setAskReplace] = useState(false)
       const [imports, setImportsState] = useState(readImports())
 
@@ -1230,10 +1266,14 @@ window.__ModuleLoader__.load({
       const install = async () => {
         setBusy("install"); setError(""); setDone(null); setDeferred([]); setAskReplace(false); setProgress(null)
         try {
-          const data = await api("/install", { ...bodyFor(), ...options, async: true })
+          const allNames = (preview && preview.manifest && preview.manifest.plugins ? preview.manifest.plugins : []).map((p) => p.name)
+          const keepNames = allNames.filter((name) => pickedNames[name] !== false)
+          const only = keepNames.length === allNames.length || keepNames.length === 0 ? undefined : keepNames
+          const installOptions = { ...options, ...(only ? { only } : {}), configChoice, syncGroups: options.syncGroups !== false }
+          const data = await api("/install", { ...bodyFor(), ...installOptions, async: true })
           if (!data || data.ok !== true || !data.job) {
             // 老宿主不认 async：退回同步调用
-            const plain = await api("/install", { ...bodyFor(), ...options })
+            const plain = await api("/install", { ...bodyFor(), ...installOptions })
             if (!plain.ok) {
               setDone({ ok: false, error: plain.error, refused: plain.refused, scan: plain.scan, report: plain.report })
               return
@@ -1282,6 +1322,12 @@ window.__ModuleLoader__.load({
         } finally { setBusy(""); setProgress(null) }
       }
 
+      const previewFindings = preview && preview.compat && Array.isArray(preview.compat.findings) ? preview.compat.findings : []
+      const previewProblems = previewFindings.filter((f) => f.level !== "info")
+      const previewRows = preview && preview.manifest && Array.isArray(preview.manifest.plugins)
+        ? preview.manifest.plugins.map((plugin) => ({ plugin, problems: previewProblems.filter((f) => f.plugin === plugin.name) }))
+          .sort((a, b) => (b.problems.length > 0 ? 1 : 0) - (a.problems.length > 0 ? 1 : 0))
+        : []
       return h("div", { style: { display: "flex", flexDirection: "column", gap: "14px" } },
         h(Notice, null,
           h("b", null, "先看清楚，再装"),
@@ -1374,7 +1420,8 @@ window.__ModuleLoader__.load({
             h(Switch, { checked: options.keepLocal, label: "保留本地已有修改（不覆盖已装插件）", onChange: (v) => setOptions({ ...options, keepLocal: v }) }),
             h(Switch, { checked: options.applyConfig, label: "安装后回填包内配置", onChange: (v) => setOptions({ ...options, applyConfig: v }) }),
             h(Switch, { checked: options.preferMarket, label: "联网时优先用插件市场的版本（市场查不到就用包内的）", onChange: (v) => setOptions({ ...options, preferMarket: v }) }),
-            h(Switch, { checked: options.enableBundles, label: "安装后直接启用（登记 bundle，重启后加载；默认关）", onChange: (v) => setOptions({ ...options, enableBundles: v }) }),
+            h(Switch, { checked: options.enableBundles, label: "安装后整体启用（全部登记 bundle，重启后加载）", onChange: (v) => setOptions({ ...options, enableBundles: v }) }),
+            h(Switch, { checked: options.syncGroups !== false, label: "安装后同步插件市场分组（包内组名并进同名组）", onChange: (v) => setOptions({ ...options, syncGroups: v }) }),
             h(Switch, { checked: options.force, label: "忽略阻断（我知道自己在干什么）", onChange: (v) => setOptions({ ...options, force: v }) })),
           h("div", { style: row },
             h("button", { style: btnPrimary, disabled: busy !== "" || (source.kind === "url" ? !source.url.trim() : !source.file), onClick: inspect }, busy === "inspect" ? "检测中…" : "检测这个包"),
@@ -1398,9 +1445,22 @@ window.__ModuleLoader__.load({
           preview.blockingReasons && preview.blockingReasons.length
             ? h(Notice, { tone: "bad" }, h("b", null, "阻断：" ), preview.blockingReasons.join("；"), "　（真要装，勾上面的「忽略阻断」）")
             : null,
-          h("div", { style: { display: "flex", flexDirection: "column", gap: "2px" } },
-            preview.manifest.plugins.map((p) => h("div", { key: p.name, style: mono },
-              "· " + p.name + "@" + p.version + (p.localEdits ? "　[含本机修改]" : "") + (p.configIncluded ? "　[有配置]" : "") + (p.dataIncluded ? "　[有数据快照]" : "")))),
+          h("div", { style: { display: "flex", flexDirection: "column", gap: "4px", maxHeight: "280px", overflow: "auto" } },
+            previewProblems.length ? h("div", { style: { ...hint, color: "#ffb020" } }, "有 " + previewProblems.length + " 条问题/提醒，相关插件已排在最前面") : null,
+            previewRows.map((row) => {
+              const p = row.plugin
+              const checked = pickedNames[p.name] !== false
+              return h("div", { key: p.name, style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap", padding: "4px 0", borderTop: "0.5px solid var(--dsw-alias-border-l2)" } },
+                h("input", { type: "checkbox", checked, onChange: () => setPickedNames((prev) => ({ ...prev, [p.name]: !checked })) }),
+                h("div", { style: { flex: "1 1 220px", minWidth: "170px" } },
+                  h("div", { style: label }, p.name, " ", h("span", { style: hint }, "@" + (p.version || "?"))),
+                  h("div", { style: hint }, [p.localEdits ? "含本机修改" : "", p.configIncluded ? "有配置" : "", p.dataIncluded ? "有数据快照" : ""].filter(Boolean).join(" · ")),
+                  row.problems.length ? h("div", { style: { ...hint, color: row.problems.some((f) => f.level === "error") ? "#ff6b6b" : "#ffb020" } },
+                    row.problems.slice(0, 3).map((f) => "· " + f.message).join("；") + (row.problems.length > 3 ? "（还有 " + (row.problems.length - 3) + " 条）" : "")) : null),
+                p.configIncluded ? h("div", { style: { display: "flex", gap: "4px" } },
+                  h("button", { style: (configChoice[p.name] || "pack") === "pack" ? chipOn : chipBtn, onClick: () => setConfigChoice((prev) => ({ ...prev, [p.name]: "pack" })), title: "用包里的配置条目覆盖/补上" }, "包内配置"),
+                  h("button", { style: configChoice[p.name] === "local" ? chipOn : chipBtn, onClick: () => setConfigChoice((prev) => ({ ...prev, [p.name]: "local" })), title: "保留本机这份配置，不用包里的" }, "保持本机")) : null)
+            })),
           h(ScanReport, { scan: preview.scan, groups: preview.scanGroups }),
           h(CompatList, { compat: preview.compat }),
           preview.notes && preview.notes.length ? h("div", { style: hint }, preview.notes.map((n, i) => h("div", { key: i }, "· " + n))) : null,

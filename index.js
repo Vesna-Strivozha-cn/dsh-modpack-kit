@@ -456,6 +456,11 @@ export default {
             }
           }),
           options: {
+            strategy: (() => {
+              const raw = String(options.strategy || options.format || '').toLowerCase()
+              if (raw === 'lite' || raw === 'hybrid' || raw === 'full') return raw
+              return options.includePayload === false ? 'lite' : 'full'
+            })(),
             includePayload: options.includePayload !== false,
             includeConfig: options.includeConfig !== false,
             includeLocalEdits: options.includeLocalEdits === true,
@@ -596,6 +601,59 @@ export default {
         })
       return job
     }
+
+    // 三种打包策略能不能选：客户端据此把卡片画成可点/灰掉，灰掉时给出原因。
+    route('/dsh-modpack-kit/api/pack/plan', async (req, res) => {
+      needPost(req, res)
+      return fenced(res, async () => {
+        const body = await readJsonBody(req)
+        const selection = Array.isArray(body.selection) ? body.selection : []
+        if (selection.length === 0) return json(res, 400, { ok: false, error: '还没选插件' })
+        const installed = installedOrEmpty()
+        const rows = selection.map((item) => {
+          const name = String(item.name || '')
+          const entry = installed.find((p) => p.name === name)
+          const version = String(item.version || (entry && entry.version) || '')
+          const semver = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/u.test(version) && version !== '0.0.0'
+          const local = Boolean(entry)
+          const market = item.source === 'npm' || item.source === 'market'
+          return { name, version, semver, local, market }
+        })
+        const noCode = rows.filter((r) => !r.local && r.market)
+        const noVersion = rows.filter((r) => !r.semver)
+        const names = (list) => list.slice(0, 6).map((r) => r.name).join('、') + (list.length > 6 ? ' 等 ' + list.length + ' 个' : '')
+        const strategies = [
+          {
+            id: 'full',
+            title: '完整包（懒人包）',
+            online: false,
+            ok: true,
+            reason: '',
+            note: '插件本体一起装进包，不联网也能装；有网时优先按市场版本装（profile 依赖是 ^版本，插件市场认成市场版），离线才退回包内副本、显示本地安装。允许带自定义配置与数据。',
+          },
+          {
+            id: 'lite',
+            title: '仅下载码（轻量包）',
+            online: true,
+            ok: noVersion.length === 0,
+            reason: noVersion.length === 0 ? '' : '这些插件没有确定的版本号，安装时找不到对应的包：' + names(noVersion),
+            note: '只记 名字@版本，体积最小；安装时必须联网从市场取包，不带自定义配置与数据。',
+          },
+          {
+            id: 'hybrid',
+            title: '混合包',
+            online: true,
+            ok: noVersion.length === 0,
+            reason: noVersion.length === 0 ? '' : '这些插件没有确定的版本号，安装时找不到对应的包：' + names(noVersion),
+            note: '只带版本号 + 配置/数据/补丁片段，体积接近「仅下载码」，但自定义配置照样能带；安装时联网取代码，装完同样是市场版。',
+          },
+        ]
+        if (noCode.length > 0) {
+          strategies[0].note += '（其中 ' + names(noCode) + ' 本机没有代码，打包时要联网取一次）'
+        }
+        return json(res, 200, { ok: true, strategies, plugins: rows })
+      })
+    })
 
     route('/dsh-modpack-kit/api/pack', async (req, res) => {
       if (!needPost(req, res)) return
@@ -926,7 +984,7 @@ export default {
         manifest: inspected.manifest,
         entries: inspected.entries,
         config,
-        options: { ...options, onProgress: (event) => push(event.pct, event.note) },
+        options: { preferMarketOnInstall: options.preferMarketOnInstall !== false || config.preferMarketOnInstall !== false, ...options, onProgress: (event) => push(event.pct, event.note) },
         context: {
           profileDir: profileDir(),
           // 优先用宿主自带的插件管理器（pnpm、激活、重启判定都由它负责）；
