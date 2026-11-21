@@ -82,6 +82,13 @@ data/<目录名>/**      插件数据快照（小体积文本）
 - 安全检测与兼容性都用 `FoldBox` 包起来（有高危 / 有 error 时默认展开，否则收起）；`FoldBox` 在 `client.js`。
 - 最近记录：`FoldBox` 支持 `actions`（标题行上的按钮，点击不会连带展开/收起）；设置页把「清空最近记录」放在标题行，展开后每行右侧还有「删除」。后台是 `lib/store.mjs` 的 `clearHistory()` / `removeHistory(at)`，对应 `POST /history/clear` 与 `POST /history/remove`（body `{at}`），返回最新 `items`。
 
+## 打包策略的判定
+
+- 判定逻辑只有一份：`index.js` 的 `computePlan(selection)`，`POST /pack/plan` 直接返回它，`POST /pack` 在真正打包前也调一次，`lite` / `hybrid` 不可用就 400 并带上 `plan`。
+- 每行判定：`versionOf()` 从 `spec`（可能是 `名字@版本`）与已装版本里抠 semver，`semver: false` 视为没有确定版本；`choice: "custom"` 记为要带自定义配置。
+- `lite` 的 blockers：没版本号、或有插件要带自定义配置；`hybrid` 的 blockers：没版本号且本机又没装（取不到代码）。`full` 永远可用，本机没代码时只在 note 里说明打包要联网一次。
+- 返回结构：`{ strategies: [{id,title,online,ok,reason,blockers,note}], plugins, counts }`；界面据此灰显、弹原因，并在当前策略失效时禁用打包。
+
 ## 安装顺序与进度窗
 
 - 打包与安装共用任务队列：`POST /pack|/install { async: true }` 立即返回 job，`GET /jobs` 轮询；`/jobs/cancel` 终止（包在内存组装，取消不落盘）、`/jobs/ack` 续跑、`/jobs/dismiss` 删记录、`/jobs/clear` 清收尾。

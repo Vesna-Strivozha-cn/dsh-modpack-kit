@@ -115,6 +115,45 @@ await step('install 演练不落地', async () => {
   assert.equal(r.data.actions[0].ok, true)
 })
 
+await step('打包策略：判定随所选插件变，不可选的策略连打包请求都挡住', async () => {
+  const planned = await call('/dsh-modpack-kit/api/pack/plan', {
+    method: 'POST',
+    body: {
+      selection: [
+        { name: 'demo-a', source: 'npm', spec: 'demo-a@1.2.3', choice: 'preset' },
+        { name: 'demo-b', source: 'npm', spec: 'demo-b@0.4.0', choice: 'custom' },
+      ],
+    },
+  })
+  assert.equal(planned.data.ok, true)
+  const byId = Object.fromEntries(planned.data.strategies.map((item) => [item.id, item]))
+  assert.equal(byId.full.ok, true, '完整包永远可用')
+  assert.equal(byId.lite.ok, false, '有插件选了自定义配置时，轻量包应不可选')
+  assert.ok(byId.lite.reason.includes('带不走配置与数据'), '轻量包要说清为什么不可选')
+  assert.equal(byId.hybrid.ok, true, '混合包能带走配置，仍然可选')
+
+  const refused = await call('/dsh-modpack-kit/api/pack', {
+    method: 'POST',
+    body: {
+      selection: [
+        { name: 'demo-a', source: 'npm', spec: 'demo-a@1.2.3', choice: 'custom' },
+      ],
+      options: { strategy: 'lite', name: '策略校验' },
+    },
+  })
+  assert.equal(refused.code, 400, '服务端也要拦，不能只靠界面')
+  assert.ok(String(refused.data.error).includes('这个打包策略现在不适用'), '要给出原因')
+
+  const noVersion = await call('/dsh-modpack-kit/api/pack/plan', {
+    method: 'POST',
+    body: { selection: [{ name: 'whatever-not-installed', source: 'npm', spec: '', choice: 'preset' }] },
+  })
+  const liteNoVersion = noVersion.data.strategies.find((item) => item.id === 'lite')
+  assert.equal(liteNoVersion.ok, false, '没有版本号的插件不能走轻量包')
+  const hybridNoVersion = noVersion.data.strategies.find((item) => item.id === 'hybrid')
+  assert.equal(hybridNoVersion.ok, false, '没有版本号、本机又没装，混合包也拦')
+})
+
 await step('最近记录：删一条 / 清空 都落盘，测完还原', async () => {
   const file = path.join(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'dsh-modpack', 'history.json')
   const backup = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null

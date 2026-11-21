@@ -648,15 +648,36 @@ window.__ModuleLoader__.load({
       }))
       // 三种策略的可选性随所选插件变化（比如只在本机、没有 semver 版本的插件选不了轻量包）
       const [plan, setPlan] = useState(null)
+      const [planError, setPlanError] = useState("")
       useEffect(() => {
         const names = Object.keys(selected)
+        setPlanError("")
         if (names.length === 0) { setPlan(null); return undefined }
         let alive = true
         api("/pack/plan", { selection: names.map((name) => selected[name]) })
-          .then((data) => { if (alive && data && data.ok && Array.isArray(data.strategies)) setPlan(data.strategies) })
-          .catch(() => { if (alive) setPlan(null) })
+          .then((data) => {
+            if (!alive) return
+            if (data && data.ok && Array.isArray(data.strategies)) setPlan(data.strategies)
+            else { setPlan(null); setPlanError((data && data.error) || "服务端没给出判定") }
+          })
+          .catch((error) => {
+            if (!alive) return
+            setPlan(null)
+            setPlanError((error && error.message) || String(error))
+          })
         return () => { alive = false }
       }, [selected])
+      const planEntries = Array.isArray(plan) ? plan : []
+      const strategyLabel = (id) => {
+        const found = (planEntries.length ? planEntries : STRATEGY_INFO).find((entry) => entry.id === id)
+        return found ? found.title : id
+      }
+      // 先选了一个策略、之后又勾了让它不可用的插件：这里提示并挡住打包，而不是悄悄替你换
+      const currentBlocked = (() => {
+        if (!planEntries.length) return null
+        const found = planEntries.find((entry) => entry.id === options.strategy)
+        return found && found.ok === false ? found : null
+      })()
       // 草稿只活在内存里：切页签不丢，刷新/重启 DSH 回到默认
       useEffect(() => { setPackDraft({ selected }) }, [selected])
       useEffect(() => { setPackDraft({ options }) }, [options])
@@ -1046,6 +1067,21 @@ window.__ModuleLoader__.load({
         } finally { setBusy("") }
       }
 
+      const strategyNotice = currentBlocked
+        ? h(Notice, { tone: "warn" },
+          h("b", null, "当前选的「" + strategyLabel(options.strategy) + "」现在不适用："),
+          currentBlocked.reason || "",
+          h("div", { style: { ...row, marginTop: "6px" } },
+            ...planEntries
+              .filter((entry) => entry.ok !== false && entry.id !== options.strategy)
+              .map((entry) => h("button", {
+                key: entry.id,
+                type: "button",
+                style: chipBtn,
+                onClick: () => setOptions({ ...options, strategy: entry.id }),
+              }, "换成" + entry.title)),
+          ))
+        : null
       return h("div", { style: { display: "flex", flexDirection: "column", gap: "14px" } },
         h(Notice, null,
           h("b", null, "打包：将所选插件封装为一个 .dshpack 文件"),
@@ -1089,28 +1125,48 @@ window.__ModuleLoader__.load({
             : "首屏只列本机已装。插件自带的内部组件（随父包一起装的那种）不单独列出" + (props.status && props.status.installedHidden ? "（本次隐藏 " + props.status.installedHidden + " 个）" : "") + "。每行最前面标出当前来源：市场版按上游版本取包，本机版取本机这份。勾选时默认「插件预设」——只打插件默认配置；要带上本机的配置条目与数据快照就改成「自定义配置」（本机版还会连代码改动一起打）。本机已装且市场里有同名条目的，默认按市场版勾选；要打本机这份就点行末「改为本机版」。搜索或点分类才去插件市场目录里查，服务端分页、一次一页。搜索结果里没装的插件也能直接勾选——打包时按版本从插件市场取包，装的时候同样从市场下载。")
         ),
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
-          h("div", { style: strong }, "包选项"),
-          h("div", { style: hint }, "打包策略（三选一）：安全检测在服务端强制进行，不提供关闭；版本号不能手改，只显示所选来源的版本。"),
+          h("div", { style: strong }, "打包策略（必选）"),
+          h("div", { style: hint }, "三选一，可不可选按你勾的插件实时判定：灰掉的那张整块变灰，点一下会弹出原因。安全检测在服务端强制进行，不提供关闭；版本号不能手改，只显示所选来源的版本。"),
           h("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap" } },
-            (plan && plan.length ? plan : STRATEGY_INFO).map((item) => h("div", {
-              key: item.id,
-              role: "button",
-              style: {
-                flex: "1 1 210px", minWidth: "190px", padding: "9px 10px", borderRadius: "8px",
-                cursor: item.ok === false ? "not-allowed" : "pointer",
-                border: "1px solid " + (options.strategy === item.id ? "#4C7DF0" : "var(--dsw-alias-border-l2)"),
-                background: options.strategy === item.id ? "rgba(76,125,240,0.08)" : "transparent",
-                opacity: item.ok === false ? 0.55 : 1,
+            (planEntries.length ? planEntries : STRATEGY_INFO.map((item) => ({ ...item, ok: true }))).map((item) => {
+              const disabled = item.ok === false
+              const chosen = options.strategy === item.id
+              const muted = disabled ? "var(--dsw-alias-label-tertiary, #8b8f99)" : "var(--dsw-alias-label-secondary)"
+              return h("div", {
+                key: item.id,
+                role: "button",
+                tabIndex: 0,
+                "aria-disabled": disabled ? "true" : "false",
+                style: {
+                  flex: "1 1 210px", minWidth: "190px", padding: "9px 10px", borderRadius: "8px",
+                  cursor: disabled ? "not-allowed" : "pointer",
+                  border: "1px solid " + (chosen && !disabled ? "#4C7DF0" : "var(--dsw-alias-border-l2)"),
+                  borderStyle: disabled ? "dashed" : "solid",
+                  background: chosen && !disabled ? "rgba(76,125,240,0.08)" : "transparent",
+                  opacity: disabled ? 0.7 : 1,
+                },
+                onClick: () => {
+                  if (disabled) { firePackNag(item.reason || "这个策略现在不能选"); return }
+                  setOptions({ ...options, strategy: item.id })
+                },
+                onKeyDown: (event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return
+                  event.preventDefault()
+                  if (disabled) { firePackNag(item.reason || "这个策略现在不能选"); return }
+                  setOptions({ ...options, strategy: item.id })
+                },
+                title: disabled ? (item.reason || "") : (item.online ? "安装时需要联网" : "不联网也能装"),
               },
-              onClick: () => {
-                if (item.ok === false) { firePackNag(item.reason || "这个策略现在不能选"); return }
-                setOptions({ ...options, strategy: item.id })
-              },
-              title: item.ok === false ? (item.reason || "") : (item.online ? "安装时需要联网" : "不联网也能装"),
-            },
-              h("div", { style: { fontWeight: 600, display: "flex", gap: "6px", alignItems: "baseline" } }, item.title,
-                h("span", { style: hint }, item.online ? "需联网" : "不联网")),
-              h("div", { style: { ...hint, marginTop: "4px", lineHeight: 1.45 } }, item.ok === false ? (item.reason || "") : (item.note || ""))))),
+                h("div", { style: { display: "flex", gap: "6px", alignItems: "baseline", color: disabled ? muted : "var(--dsw-alias-label-primary)" } },
+                  h("span", { style: { fontWeight: 600 } }, item.title),
+                  h("span", { style: { fontSize: "11px", color: muted } }, item.online ? "需联网" : "不联网"),
+                  disabled ? h("span", { style: { ...chip, marginLeft: "auto", color: muted, cursor: "pointer" } }, "不可选") : null),
+                h("div", { style: { marginTop: "4px", lineHeight: 1.45, fontSize: "12px", color: muted } },
+                  disabled ? (item.reason || "这个策略现在不能选") : (item.note || "")))
+            })),
+          strategyNotice,
+          planEntries.length === 0 && picked.length > 0 ? h("div", { style: hint }, "正在判定…") : null,
+          planError ? h("div", { style: hint }, "策略判定失败（打包时会再判一次）：" + planError) : null,
           h(NagText, { text: packNag }),
           h("div", { style: { ...row, rowGap: "6px" } },
             h("input", { style: { ...input, flex: "1 1 200px" }, placeholder: "整合包名", value: options.name, onChange: (e) => setOptions({ ...options, name: e.target.value }) }),
@@ -1118,7 +1174,7 @@ window.__ModuleLoader__.load({
           h("input", { style: { ...input, width: "100%" }, placeholder: "一句话描述（可空）", value: options.description, onChange: (e) => setOptions({ ...options, description: e.target.value }) }),
           h(Switch, { checked: options.confirmLicense, label: "我确认所选插件的许可证允许再分发，或已获得作者授权", onChange: (v) => setOptions({ ...options, confirmLicense: v }) }),
           h("div", { style: row },
-            h("button", { style: btnPrimary, disabled: picked.length === 0 || busy === "start", onClick: doPack }, busy === "start" ? "提交中…" : ("打包 " + picked.length + " 个插件")),
+            h("button", { style: btnPrimary, disabled: picked.length === 0 || busy === "start" || Boolean(currentBlocked), onClick: doPack }, busy === "start" ? "提交中…" : (currentBlocked ? "先换个可用的策略" : ("打包 " + picked.length + " 个插件"))),
             started ? h("span", { style: hint }, "已开始：" + started + "（进度在左下角，可以接着选别的再打一个）") : null,
             status ? h("span", { style: hint }, "DSH " + (status.dshVersion || "?") + " · profile " + status.profile) : null)),
         pausedRiskNodes.length ? h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "10px", borderColor: "#d9534f" } }, pausedRiskNodes) : null,

@@ -198,6 +198,73 @@ export default {
       try { return listInstalled(profileDir()) } catch { return [] }
     }
 
+    // 三种策略能不能选：按「这次勾了哪些插件」实时算，客户端拿去做卡片灰显与原因弹窗；
+    // 打包时也再算一遍，挡住「界面上换了插件、策略却没跟着变」的情况。
+    const computePlan = (selection) => {
+      const installed = installedOrEmpty()
+      // spec 可能是 名字@版本，也可能是纯版本；统一抠出版本号再判能不能按版本装
+      const versionOf = (item, entry) => {
+        const spec = String(item.spec || '')
+        const fromSpec = spec.includes('@') && !spec.startsWith('@') ? spec.slice(spec.lastIndexOf('@') + 1) : spec
+        const candidates = [item.version, fromSpec, entry && entry.version]
+        for (const value of candidates) {
+          const text = String(value || '')
+          if (/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u.test(text) && text !== '0.0.0') return text
+        }
+        return ''
+      }
+      const rows = selection.map((item) => {
+        const name = String(item.name || '')
+        const entry = installed.find((p) => p.name === name)
+        const version = versionOf(item, entry)
+        const local = Boolean(entry)
+        const market = item.source === 'npm' || item.source === 'market'
+        const custom = item.choice === 'custom'
+        return { name, version, semver: Boolean(version), local, market, custom }
+      })
+      const noCode = rows.filter((r) => !r.local && r.market)
+      const noVersion = rows.filter((r) => !r.semver)
+      const customRows = rows.filter((r) => r.custom)
+      const names = (list) => list.slice(0, 6).map((r) => r.name).join('、') + (list.length > 6 ? ' 等 ' + list.length + ' 个' : '')
+      const liteBlockers = []
+      if (noVersion.length) liteBlockers.push({ kind: 'version', text: '这些插件没有确定的版本号，安装时找不到对应的包：' + names(noVersion) })
+      if (customRows.length) liteBlockers.push({ kind: 'config', text: '给这些插件选了「自定义配置」，轻量包只记版本、带不走配置与数据：' + names(customRows) + '（改回「插件预设」，或换完整包 / 混合包）' })
+      const hybridBlockers = []
+      const noCodeNoVersion = noVersion.filter((r) => !r.local)
+      if (noCodeNoVersion.length) hybridBlockers.push({ kind: 'version', text: '这些插件没有确定的版本号，本机又没装、取不到代码：' + names(noCodeNoVersion) })
+      const strategies = [
+        {
+          id: 'full',
+          title: '完整包（懒人包）',
+          online: false,
+          ok: true,
+          reason: '',
+          blockers: [],
+          note: '插件本体一起装进包，不联网也能装；有网时优先按市场版本装（profile 依赖是 ^版本，插件市场认成市场版），离线才退回包内副本、显示本地安装。允许带自定义配置与数据。',
+        },
+        {
+          id: 'lite',
+          title: '仅下载码（轻量包）',
+          online: true,
+          ok: liteBlockers.length === 0,
+          reason: liteBlockers.map((b) => b.text).join('；'),
+          blockers: liteBlockers,
+          note: '只记 名字@版本，体积最小；安装时必须联网从市场取包，不带自定义配置与数据。',
+        },
+        {
+          id: 'hybrid',
+          title: '混合包（轻量为主 + 必要的完整）',
+          online: true,
+          ok: hybridBlockers.length === 0,
+          reason: hybridBlockers.map((b) => b.text).join('；'),
+          blockers: hybridBlockers,
+          note: '能按版本装的就只记 名字@版本（安装时联网取包）；没有确定版本、或者要带走本机改动的插件，连代码一起打进来（这部分安装时不用联网）。配置/数据/补丁片段照样带。',
+        },
+      ]
+      if (noCode.length > 0) strategies[0].note += '（其中 ' + names(noCode) + ' 本机没有代码，打包时要联网取一次）'
+      return { strategies, plugins: rows, counts: { selected: rows.length, custom: customRows.length, noVersion: noVersion.length, localOnly: rows.filter((r) => r.local).length } }
+    }
+
     const compatFor = (manifest) => checkCompatibility(manifest.plugins, {
       installed: installedOrEmpty(),
       dshVersion: (() => { try { return dshVersion(profileDir()) } catch { return '' } })(),
@@ -609,51 +676,7 @@ export default {
         const body = asJson(await readBody(req), {}) || {}
         const selection = Array.isArray(body.selection) ? body.selection : []
         if (selection.length === 0) return json(res, 400, { ok: false, error: '还没选插件' })
-        const installed = installedOrEmpty()
-        const rows = selection.map((item) => {
-          const name = String(item.name || '')
-          const entry = installed.find((p) => p.name === name)
-          const version = String(item.version || (entry && entry.version) || '')
-          const semver = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/u.test(version) && version !== '0.0.0'
-          const local = Boolean(entry)
-          const market = item.source === 'npm' || item.source === 'market'
-          return { name, version, semver, local, market }
-        })
-        const noCode = rows.filter((r) => !r.local && r.market)
-        const noVersion = rows.filter((r) => !r.semver)
-        const names = (list) => list.slice(0, 6).map((r) => r.name).join('、') + (list.length > 6 ? ' 等 ' + list.length + ' 个' : '')
-        const strategies = [
-          {
-            id: 'full',
-            title: '完整包（懒人包）',
-            online: false,
-            ok: true,
-            reason: '',
-            note: '插件本体一起装进包，不联网也能装；有网时优先按市场版本装（profile 依赖是 ^版本，插件市场认成市场版），离线才退回包内副本、显示本地安装。允许带自定义配置与数据。',
-          },
-          {
-            id: 'lite',
-            title: '仅下载码（轻量包）',
-            online: true,
-            ok: noVersion.length === 0,
-            reason: noVersion.length === 0 ? '' : '这些插件没有确定的版本号，安装时找不到对应的包：' + names(noVersion),
-            note: '只记 名字@版本，体积最小；安装时必须联网从市场取包，不带自定义配置与数据。',
-          },
-          {
-            id: 'hybrid',
-            title: '混合包（轻量为主 + 必要的完整）',
-            online: true,
-            ok: noVersion.filter((r) => !r.local).length === 0,
-            reason: noVersion.filter((r) => !r.local).length === 0
-              ? ''
-              : '这些插件没有确定的版本号，本机又取不到代码，装不回来：' + names(noVersion.filter((r) => !r.local)),
-            note: '能按版本装的就只记 名字@版本（安装时联网取包）；没有确定版本、或者要带走本机改动的插件，连代码一起打进来（这部分安装时不用联网）。配置/数据/补丁片段照样带。',
-          },
-        ]
-        if (noCode.length > 0) {
-          strategies[0].note += '（其中 ' + names(noCode) + ' 本机没有代码，打包时要联网取一次）'
-        }
-        return json(res, 200, { ok: true, strategies, plugins: rows })
+        return json(res, 200, { ok: true, ...computePlan(selection) })
       }
     })
 
@@ -662,6 +685,15 @@ export default {
       const body = asJson(await readBody(req), {})
       const selection = Array.isArray(body.selection) ? body.selection : []
       if (selection.length === 0) { json(res, 400, { ok: false, error: '没有选择任何插件' }); return }
+      const strategy = String((body.options && body.options.strategy) || 'full')
+      if (strategy === 'lite' || strategy === 'hybrid') {
+        const plan = computePlan(selection)
+        const chosen = plan.strategies.find((entry) => entry.id === strategy)
+        if (chosen && chosen.ok === false) {
+          json(res, 400, { ok: false, error: '这个打包策略现在不适用：' + chosen.reason, plan })
+          return
+        }
+      }
       if (body.async === true || body.background === true) {
         const job = startPackJob(body)
         json(res, 200, { ok: true, async: true, job: publicJob(job) })
