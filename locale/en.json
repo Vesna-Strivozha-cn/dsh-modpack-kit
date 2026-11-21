@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Modpack Kit",
-    "description": "PCL/HMCL-style modpack tool for DeepSeek Harness: bundle plugins with their config and data into one .dshpack, install them in one pass, works offline, no need to install each plugin by hand when moving to another machine. Also searched as: modpack, plugin bundle, batch install, one-click install, offline install, migrate plugins, back up plugin config, share a plugin combo. Three strategies: full (installs offline), download-only (smallest), hybrid (per-plugin — only what cannot be fetched by version ships inside). Packing scans in memory and redacts suspected credentials (never written to disk; high-risk findings pause until confirmed); installing re-checks sha256, dependencies and licences. Categories, search, paging and groups share the plugin market. The plugin market is recommended, not required.",
+    "description": "Who says DSH cannot do modpacks? (Put these plugins together and it is genuinely good.) Bundle DeepSeek Harness plugins with their config and data into one .dshpack: one-click install, works offline, three strategies, groups share the plugin market. npm: https://www.npmjs.com/package/dsh-modpack-kit",
     "detail": "docs/DETAIL.md"
   }
 }

@@ -1868,7 +1868,7 @@ window.__ModuleLoader__.load({
         h("div", { style: { maxWidth: "1020px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "14px" } },
           h("div", { style: { display: "flex", alignItems: "baseline", gap: "10px", flexWrap: "wrap" } },
             h("h2", { style: { margin: 0, fontSize: "20px", fontWeight: 600 } }, "整合包"),
-            h("span", { style: hint }, "把多个插件打成一个 .dshpack：完整版自带本体，轻量版联网取包")),
+            h("span", { style: hint }, ((status && status.config && status.config.tagline) || "谁说 dsh 不能整整合包呢？（你说这几个插件整一块不牛逼坏了）"))),
           h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine),
           panels,
           footNote,

@@ -138,6 +138,19 @@ test('默认打包上限 512MB，进度窗位置不进配置', () => {
   assertEqual(clampConfig({ ...DEFAULT_CONFIG, maxMetadataBytes: 1 }).maxMetadataBytes, 4, '过小的清单上限应被抬到 4 MB')
 })
 
+test('定位语：默认配置里带那句备注，页面标题与市场描述共用同一句', () => {
+  const tagline = '谁说dsh不能整整合包呢？（你说这几个插件整一块不牛逼坏了）'
+  assertEqual(DEFAULT_CONFIG.tagline, tagline, '默认配置的定位语')
+  assertEqual(clampConfig({ ...DEFAULT_CONFIG, tagline: '' }).tagline, tagline, '清空后退回默认定位语')
+  const client = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert(client.includes('status.config.tagline'), '页面标题读 status.config.tagline')
+  const yml = fs.readFileSync(new URL('../dev/marketplace-awesome-dsh-plugin.yml', import.meta.url), 'utf8')
+  assert(yml.includes(tagline), '市场条目描述开头带同一句')
+  assert(yml.includes('npmjs.com/package/dsh-modpack-kit'), '市场条目介绍里带 npm 链接')
+  const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  assertEqual(pkg.version, '0.2.0-1', '版本 0.2.0-1')
+})
+
 // —— 版本清单：billion-context 那种十几 MB 的包 ——
 test('版本清单：超大包能退让到精简清单 / 单版本清单，不再卡在 16 MB', () => {
   const registry = fs.readFileSync(new URL('../lib/registry.mjs', import.meta.url), 'utf8')
