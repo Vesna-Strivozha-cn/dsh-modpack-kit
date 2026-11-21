@@ -641,11 +641,13 @@ export default {
           },
           {
             id: 'hybrid',
-            title: '混合包',
+            title: '混合包（轻量为主 + 必要的完整）',
             online: true,
-            ok: noVersion.length === 0,
-            reason: noVersion.length === 0 ? '' : '这些插件没有确定的版本号，安装时找不到对应的包：' + names(noVersion),
-            note: '只带版本号 + 配置/数据/补丁片段，体积接近「仅下载码」，但自定义配置照样能带；安装时联网取代码，装完同样是市场版。',
+            ok: noVersion.filter((r) => !r.local).length === 0,
+            reason: noVersion.filter((r) => !r.local).length === 0
+              ? ''
+              : '这些插件没有确定的版本号，本机又取不到代码，装不回来：' + names(noVersion.filter((r) => !r.local)),
+            note: '能按版本装的就只记 名字@版本（安装时联网取包）；没有确定版本、或者要带走本机改动的插件，连代码一起打进来（这部分安装时不用联网）。配置/数据/补丁片段照样带。',
           },
         ]
         if (noCode.length > 0) {

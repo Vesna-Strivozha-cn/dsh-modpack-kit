@@ -135,35 +135,37 @@ const lite = await timed('lite', () => buildPack({
   context,
 }))
 
-console.log('\n== 3/3 混合包（下载码 + 必要文件，摘掉 plugins/）')
+console.log('\n== 3/3 混合包（按插件分档：带本机改动的连本体，其余只记版本）')
+// 混合包的真实形态：一部分插件 mode: local（连本机改动一起打），其余 mode: base（只记版本）。
+const mixedSelection = selection.map(({ localSize, ...rest }, index) => ({ ...rest, mode: index < 2 ? 'local' : 'base' }))
+const hybrid = await timed('hybrid', () => buildPack({
+  selection: mixedSelection,
+  options: { ...common, strategy: 'hybrid' },
+  context,
+}))
+const hybridEntries = readZip(hybrid.buffer, { config })
+const embeddedNames = (hybrid.manifest.plugins || []).filter((p) => p.embedded === true).map((p) => p.name)
+console.log('  连本体一起打的插件：' + (embeddedNames.join('、') || '（没有）'))
+
 const fullEntries = readZip(full.buffer, { config })
 const groups = { plugins: 0, configs: 0, data: 0, patch: 0, other: 0 }
 const counts = { plugins: 0, configs: 0, data: 0, patch: 0, other: 0 }
-const kept = []
+const perPlugin = new Map()
 for (const entry of fullEntries) {
-  const isPlugin = entry.name.startsWith('plugins/')
-  if (isPlugin) { groups.plugins += entry.data.length; counts.plugins += 1; continue }
+  const m = /^plugins\/([^/]+)\//.exec(entry.name)
+  if (m) perPlugin.set(m[1], (perPlugin.get(m[1]) || 0) + entry.data.length)
+  if (entry.name.startsWith('plugins/')) { groups.plugins += entry.data.length; counts.plugins += 1; continue }
   if (entry.name.startsWith('configs/')) { groups.configs += entry.data.length; counts.configs += 1 }
   else if (entry.name.startsWith('data/')) { groups.data += entry.data.length; counts.data += 1 }
   else if (entry.name === 'cordis.patch.yml') { groups.patch += entry.data.length; counts.patch += 1 }
   else { groups.other += entry.data.length; counts.other += 1 }
-  kept.push({ name: entry.name, data: entry.data, compress: entry.compress })
 }
-// 每个插件在包里的未压缩体积（plugins/<目录>/…），以及整体压缩率
-const perPlugin = new Map()
-for (const entry of fullEntries) {
-  const m = /^plugins\/([^/]+)\//.exec(entry.name)
-  if (!m) continue
-  perPlugin.set(m[1], (perPlugin.get(m[1]) || 0) + entry.data.length)
-}
-
-const hybridBuffer = await timed('hybrid zip', async () => writeZip(kept, { config, mtime: new Date() }))
 
 const total = chosen.reduce((sum, p) => sum + p.size, 0)
 const rows = [
   ['完整包 full（现状）', full.buffer.length, fullEntries.length],
   ['轻量包 lite', lite.buffer.length, readZip(lite.buffer, { config }).length],
-  ['混合包 hybrid（下载码+必要文件）', hybridBuffer.length, kept.length],
+  ['混合包 hybrid（轻量为主 + 必要的完整）', hybrid.buffer.length, hybridEntries.length],
 ]
 
 console.log('\n== 结果 ==')
@@ -190,10 +192,10 @@ for (const [dir, size] of [...perPlugin.entries()].sort((a, b) => b[1] - a[1])) 
 }
 console.log('')
 console.log('整体压缩率：' + pct(full.buffer.length, groups.plugins + groups.configs + groups.data + groups.patch + groups.other) + '（包 / 原始内容）')
-console.log('若改成 hybrid：' + bytes(full.buffer.length) + ' → ' + bytes(hybridBuffer.length)
-  + '（省 ' + (((full.buffer.length - hybridBuffer.length) / full.buffer.length) * 100).toFixed(1) + '%）')
+console.log('若改成 hybrid：' + bytes(full.buffer.length) + ' → ' + bytes(hybrid.buffer.length)
+  + '（省 ' + (((full.buffer.length - hybrid.buffer.length) / full.buffer.length) * 100).toFixed(1) + '%，其中 ' + embeddedNames.length + ' 个插件连本体一起打）')
 
 // 沙箱产物别留在 profile 目录里
-for (const p of [full, lite]) {
+for (const p of [full, lite, hybrid]) {
   try { fs.rmSync(path.join(config.home || path.dirname(profile), 'dsh-modpack', 'packs', p.fileName), { force: true }) } catch { /* 忽略 */ }
 }

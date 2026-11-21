@@ -60,7 +60,7 @@ const force = has('--force')
 // 默认跳过本机已装的（同名或同插件不同版本都算已有）；--replace 才覆盖
 const replaceExisting = has('--replace') || has('--force-existing')
 
-say('DSH 整合包：' + (manifest.name || '(未命名)') + ' · ' + (manifest.format === 'full' ? '完整版' : '轻量版'))
+say('DSH 整合包：' + (manifest.name || '(未命名)') + ' · ' + (manifest.format === 'full' ? '完整版' : manifest.format === 'hybrid' ? '混合版（轻量为主，个别插件带本体）' : '轻量版'))
 if (manifest.author) say('打包者：' + manifest.author)
 if (manifest.createdAt) say('打包时间：' + new Date(manifest.createdAt).toLocaleString())
 const pluginCount = Array.isArray(manifest.plugins) ? manifest.plugins.length : 0
@@ -118,8 +118,8 @@ if (!cli) {
   say('  1. 加参数指定：node install/install.mjs --dsh "D:\\你的安装位置\\DeepSeek Harness.exe"')
   say('  2. 手工装：对 plugins/ 下每个目录执行')
   say('       dsh plugin --profile ' + profile + ' add "file:<绝对路径>"')
-  if (manifest.format === 'lite') {
-    say('     轻量版没有插件本体，改为按版本从 registry 安装：dsh plugin --profile ' + profile + ' add <插件名>@<版本>')
+  if (manifest.format !== 'full') {
+    say('     包里没带本体的插件（' + (manifest.format === 'lite' ? '全部' : '没有确定版本或带本机改动的除外') + '），改为按版本从 registry 安装：dsh plugin --profile ' + profile + ' add <插件名>@<版本>')
   }
   process.exit(3)
 }
@@ -151,7 +151,7 @@ function copyTree(src, dest) {
 }
 
 const vendor = vendorRoot()
-if (manifest.format === 'full' && !dryRun) say('插件会先复制到：' + vendor)
+if (!dryRun && (manifest.plugins || []).some((p) => fs.existsSync(path.join(root, 'plugins', p.dirName || p.name)))) say('带本体的插件会先复制到：' + vendor)
 
 const results = []
 const skipped = []
@@ -183,19 +183,18 @@ for (const plugin of manifest.plugins || []) {
     say('跳过 ' + plugin.name + '：本机已装 ' + already)
   } else {
   const dirName = plugin.dirName || plugin.name
+  // 混合包里有的插件带本体、有的只带版本：看「包里有没有这个插件的目录」，
+  // 而不是看整包的 format。
+  const packedDir = path.join(root, 'plugins', dirName)
+  const hasCode = fs.existsSync(packedDir)
   let fileSpec = ''
-  if (manifest.format === 'full') {
-    const dir = path.join(root, 'plugins', dirName)
-    if (!fs.existsSync(dir)) {
-      results.push({ plugin, ok: false, message: '包里缺少 plugins/' + dirName })
-      continue
-    }
+  if (hasCode) {
     if (dryRun) {
-      fileSpec = 'file:' + dir.replace(/\\/gu, '/')
+      fileSpec = 'file:' + packedDir.replace(/\\/gu, '/')
     } else {
       const target = path.join(vendor, dirName)
       fs.rmSync(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
-      copyTree(dir, target)
+      copyTree(packedDir, target)
       fileSpec = 'file:' + target.replace(/\\/gu, '/')
     }
   }

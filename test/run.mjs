@@ -1427,29 +1427,49 @@ await testAsync('安装：宿主有插件管理器时走服务，不再调命令
   assertEqual(run.needsRestart, true, '管理器说要重启，结果也要说要重启')
 })
 
-await testAsync('打包策略：完整包带本体，轻量包只记版本，混合包带版本与配置', async () => {
+await testAsync('打包策略：完整包带本体，轻量包只记版本，混合包只把需要的插件打成完整', async () => {
   const { profileDir, installed } = await fixture()
   const base = { selection: [{ name: 'demo-plugin', source: 'profile', mode: 'local' }], config: { ...DEFAULT_CONFIG }, context: { profileDir, installed, dshVersion: '1.0.0', parsePatch: (t) => parseYaml(t), patchText: '[]\n' } }
   const full = await buildPack({ ...base, options: { confirmLicense: true, strategy: 'full' } })
   const lite = await buildPack({ ...base, options: { confirmLicense: true, strategy: 'lite' } })
   const hybrid = await buildPack({ ...base, options: { confirmLicense: true, strategy: 'hybrid' } })
+  const hybridBase = await buildPack({ ...base, selection: [{ name: 'demo-plugin', source: 'profile', mode: 'base' }], options: { confirmLicense: true, strategy: 'hybrid' } })
   assertEqual(full.manifest.format, 'full')
   assertEqual(lite.manifest.format, 'lite')
   assertEqual(hybrid.manifest.format, 'hybrid')
   const fullNames = readZip(full.buffer).map((e) => e.name)
   const liteNames = readZip(lite.buffer).map((e) => e.name)
   const hybridNames = readZip(hybrid.buffer).map((e) => e.name)
+  const hybridBaseNames = readZip(hybridBase.buffer).map((e) => e.name)
   assert(fullNames.some((n) => n.startsWith('plugins/')), '完整包应带插件本体')
   assert(!liteNames.some((n) => n.startsWith('plugins/')), '轻量包不该带插件本体')
-  assert(!hybridNames.some((n) => n.startsWith('plugins/')), '混合包不带插件本体')
-  assert(hybrid.size > lite.size, '混合包比轻量包大一点（多带配置/数据/清单）')
+  // 混合包按插件分档：要带走本机改动的（mode: local）连本体一起打，按原版装的（mode: base）只记版本
+  assert(hybridNames.some((n) => n.startsWith('plugins/')), '混合包：要带走本机改动的插件应连本体一起打')
+  assertEqual(hybrid.manifest.plugins[0].embedded, true, '这个插件在混合包里应标 embedded')
+  assert(!hybridBaseNames.some((n) => n.startsWith('plugins/')), '混合包：按原版装的插件只记版本')
+  assertEqual(hybridBase.manifest.plugins[0].embedded, false, '按原版装的插件不该 embedded')
+  assert(hybrid.size > lite.size, '混合包比轻量包大一点（带上了需要完整打包的那部分）')
+  assert(hybrid.size < full.size, '混合包应比完整包小（不是所有插件都带本体）')
 })
 
-test('策略可用性：没有确定版本号的插件不能选轻量包与混合包', () => {
+test('混合包：安装侧按「包里有没有这个插件的目录」决定连不联网', () => {
+  const installSrc = fs.readFileSync(new URL('../lib/install.mjs', import.meta.url), 'utf8')
+  const stubSrc = fs.readFileSync(new URL('../assets/install-stub.mjs', import.meta.url), 'utf8')
+  assert(installSrc.includes('let embedded = false'), '安装逻辑应记下这个插件是不是随包带来')
+  assert(installSrc.includes('if (pluginPayload(entries, plugin.dirName || plugin.name).length > 0)'), '包里带代码就直接用包内副本')
+  assert(installSrc.includes('if (!embedded) {'), '只有没带代码的插件才需要联网取包')
+  assert(stubSrc.includes('const hasCode = fs.existsSync(packedDir)'), '独立安装器也按插件判断，而不是看整包 format')
+})
+
+
+test('策略可用性：没有确定版本号又不能自带代码的插件，连混合包也选不了', () => {
   const src = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8')
   assert(src.includes("id: 'lite'"), '应有轻量包策略描述')
   assert(src.includes("id: 'hybrid'"), '应有混合包策略描述')
   assert(src.includes('这些插件没有确定的版本号'), '不可选时要给出原因')
+  // 混合包：本机有代码的插件（没有确定版本也可以连本体打进来），只有「没版本又没代码」才拦
+  assert(src.includes('noVersion.filter((r) => !r.local)'), '混合包应只拦「没版本也没代码」的插件')
+  assert(src.includes('本机又取不到代码'), '混合包被拦时要说明原因')
   assert(src.includes("/dsh-modpack-kit/api/pack/plan"), '应有策略可用性路由')
   assert(src.includes('strategy: (() => {'), '打包时应透传 strategy')
 })
