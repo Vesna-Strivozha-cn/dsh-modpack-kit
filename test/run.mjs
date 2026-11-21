@@ -1754,6 +1754,14 @@ test('离线安装：探不到 registry 就用包里自带的那份', () => {
   assert(reg.includes("'/-/ping'"), '探测应打 /-/ping')
 })
 
+test('请求体解析只有一处：路由统一用 readJsonBody，别再手写 asJson(await readBody(req))', () => {
+  const text = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  assert(text.includes('readJsonBody'), 'index.js 要引入统一助手')
+  assert(!/\basJson\(/.test(text), 'index.js 里不该再手写 asJson(…)：容易漏 await 或忘给默认值')
+  const http = fs.readFileSync(new URL('../lib/http.mjs', import.meta.url), 'utf8')
+  assert(http.includes('export const readJsonBody = async (req, fallback = {}, limit = MAX_JSON_BODY) =>'), '助手要能带体积上限（drop 路由用 256 MB）')
+})
+
 for (const [state, name, detail] of results) {
   if (state === 'ok') console.log('ok   ' + name)
   else console.log('FAIL ' + name + '\n' + detail)

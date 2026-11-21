@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Modpack Kit",
-    "description": "HMCL/PCL-style modpack packaging for DeepSeek Harness: bundle several plugins with their configuration and data into one .dshpack and install it in a single pass. A full pack installs on a machine that only has DSH; a lite pack records names and versions and fetches them from the plugin market on install. Each plugin is packed as a preset (default configuration) or custom (local configuration and data, credentials redacted), configuration is re-applied by entry, and existing data files are never overwritten by default. Packing always scans for secrets and risky code in memory (masked, never written to disk); high-risk hits pause the job until confirmed, then it resumes from the checkpoint. Installation re-checks sha256 integrity, compatibility and licences, and can finish without enabling. Categories, search, paging and plugin groups come from the plugin market; groups collapse and can be added in one click. The UI can live in settings, the sidebar or the plugins tab. The plugin market is recommended, not required.",
+    "description": "PCL/HMCL-style modpacks for DeepSeek Harness: bundle plugins with their config and data into one .dshpack and install in one pass. Three strategies: full (installs offline), download-only (smallest), hybrid (per-plugin — only what cannot be fetched by version ships inside). Packing scans in memory and redacts suspected credentials (never written to disk; high-risk findings pause until confirmed); installing re-checks sha256, dependencies and licences. Categories, search, paging and groups share the plugin market, and installed plugins register as market versions. The plugin market is recommended, not required.",
     "detail": "docs/DETAIL.md"
   }
 }

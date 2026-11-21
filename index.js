@@ -20,7 +20,7 @@ import { catalogSummary, searchCatalog, syncCatalog, categoryMapFor, lookupPlugi
 import { parseYaml } from './lib/yamlish.mjs'
 import { readPatch } from './lib/profile.mjs'
 import { buildReadme } from './lib/manifest.mjs'
-import { sendJson as json, readBody, readRawBody, asJson, MAX_JSON_BODY, MAX_DROP_BODY } from './lib/http.mjs'
+import { sendJson as json, readBody, readRawBody, readJsonBody, MAX_JSON_BODY, MAX_DROP_BODY } from './lib/http.mjs'
 
 const VERSION = (() => {
   try { return JSON.parse(fs.readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version || '0.0.0' } catch { return '0.0.0' }
@@ -282,7 +282,7 @@ export default {
     route('/dsh-modpack-kit/api/settings', async (req, res) => {
       if (req.method === 'GET') { json(res, 200, { ok: true, config, defaults: DEFAULT_CONFIG }); return }
       if (!needPost(req, res)) return
-      const body = asJson(await readBody(req), null)
+      const body = await readJsonBody(req, null)
       if (!body || typeof body !== 'object') { json(res, 400, { ok: false, error: '请求体不是对象' }); return }
       const patch = body.patch && typeof body.patch === 'object' ? body.patch : body
       const next = { ...config }
@@ -324,7 +324,7 @@ export default {
 
     route('/dsh-modpack-kit/api/catalog/lookup', async (req, res) => {
       if (!needPost(req, res)) return
-      const body = asJson(await readBody(req), {}) || {}
+      const body = await readJsonBody(req)
       const names = Array.isArray(body.names) ? body.names.filter((n) => typeof n === 'string').slice(0, 400) : []
       try {
         json(res, 200, { ok: true, items: lookupPlugins(config, names) })
@@ -335,7 +335,7 @@ export default {
 
     route('/dsh-modpack-kit/api/catalog/sync', async (req, res) => {
       if (!needPost(req, res)) return
-      const body = asJson(await readBody(req), {}) || {}
+      const body = await readJsonBody(req)
       const hours = Math.max(1, Number(config.catalogRefreshHours) || 24)
       const result = await syncCatalog(config, { force: body.force === true, maxAgeMs: hours * 3600 * 1000 })
       if (result.ok && !result.skipped) appendLog(`目录同步 ${result.count} 条（${result.source}，${Math.round((result.ms || 0) / 100) / 10}s）`)
@@ -344,7 +344,7 @@ export default {
 
     route('/dsh-modpack-kit/api/catalog/search', async (req, res) => {
       if (!needPost(req, res)) return
-      const body = asJson(await readBody(req), {}) || {}
+      const body = await readJsonBody(req)
       const localPlugins = installedOrEmpty().filter((p) => p.isPlugin && p.isDirect)
       const localCategories = categoryMapFor(config, localPlugins.map((p) => p.name))
       const installed = localPlugins.map((p) => ({
@@ -370,7 +370,7 @@ export default {
     // —— 查某个包的可用版本 ——
     route('/dsh-modpack-kit/api/versions', async (req, res) => {
       if (!needPost(req, res)) return
-      const body = asJson(await readBody(req), {})
+      const body = await readJsonBody(req)
       const name = String(body.name || '')
       try {
         const { meta, registry } = await npmMetadata(name, config, { full: true })
@@ -673,7 +673,7 @@ export default {
     route('/dsh-modpack-kit/api/pack/plan', async (req, res) => {
       if (!needPost(req, res)) return
       {
-        const body = asJson(await readBody(req), {}) || {}
+        const body = await readJsonBody(req)
         const selection = Array.isArray(body.selection) ? body.selection : []
         if (selection.length === 0) return json(res, 400, { ok: false, error: '还没选插件' })
         return json(res, 200, { ok: true, ...computePlan(selection) })
@@ -682,7 +682,7 @@ export default {
 
     route('/dsh-modpack-kit/api/pack', async (req, res) => {
       if (!needPost(req, res)) return
-      const body = asJson(await readBody(req), {})
+      const body = await readJsonBody(req)
       const selection = Array.isArray(body.selection) ? body.selection : []
       if (selection.length === 0) { json(res, 400, { ok: false, error: '没有选择任何插件' }); return }
       const strategy = String((body.options && body.options.strategy) || 'full')
@@ -706,7 +706,7 @@ export default {
     // 风险停下来之后：只有「我知道在干什么」，点它就在同一个任务里接着跑完
     route('/dsh-modpack-kit/api/jobs/ack', async (req, res) => {
       if (!needPost(req, res)) return
-      const body = asJson(await readBody(req), {})
+      const body = await readJsonBody(req)
       const job = jobs.get(String(body.id || ''))
       if (!job) { json(res, 404, { ok: false, error: '没有这个任务（可能已完成并过期）' }); return }
       if (!job.risk) { json(res, 400, { ok: false, error: '这个任务没有风险项，不需要确认' }); return }
@@ -741,7 +741,7 @@ export default {
 
     route('/dsh-modpack-kit/api/jobs/dismiss', async (req, res) => {
       if (!needPost(req, res)) return
-      const body = asJson(await readBody(req), {})
+      const body = await readJsonBody(req)
       const id = String(body.id || '')
       const job = jobs.get(id)
       if (!job) { json(res, 404, { ok: false, error: '没有这个任务（可能已经删了）' }); return }
@@ -773,7 +773,7 @@ export default {
 
     route('/dsh-modpack-kit/api/jobs/cancel', async (req, res) => {
       if (!needPost(req, res)) return
-      const body = asJson(await readBody(req), {})
+      const body = await readJsonBody(req)
       const job = jobs.get(String(body.id || ''))
       if (!job) { json(res, 404, { ok: false, error: '没有这个任务（可能已完成并过期）' }); return }
       if (job.status !== 'running') {
@@ -803,7 +803,7 @@ export default {
     // —— 下载 / 落盘 ——
     route('/dsh-modpack-kit/api/download', async (req, res) => {
       if (!needPost(req, res)) return
-      const body = asJson(await readBody(req), {})
+      const body = await readJsonBody(req)
       const item = pending.get(String(body.token || ''))
       if (!item) { json(res, 404, { ok: false, error: '打包结果已过期，请重新打包' }); return }
       const safeName = String(body.fileName || item.fileName || 'pack.dshpack').replace(/[^\w.\-]+/gu, '_')
@@ -818,7 +818,7 @@ export default {
 
     route('/dsh-modpack-kit/api/save', async (req, res) => {
       if (!needPost(req, res)) return
-      const body = asJson(await readBody(req), {})
+      const body = await readJsonBody(req)
       const item = pending.get(String(body.token || ''))
       if (!item) { json(res, 404, { ok: false, error: '打包结果已过期，请重新打包' }); return }
       const paths = pathsFor(config)
@@ -863,7 +863,7 @@ export default {
         return
       }
       if (req.method !== 'POST') { json(res, 405, { ok: false }); return }
-      const body = asJson(await readBody(req), {})
+      const body = await readJsonBody(req)
       const raw = String(body.dir || '').trim()
       const dir = raw ? path.resolve(raw) : pathsFor(config).packs
       const listed = listPacks(dir)
@@ -878,7 +878,7 @@ export default {
       try {
         if (contentType.includes('application/json')) {
           // 有些环境不许 POST 二进制，界面会退回 base64：这里同样收
-          const body = asJson(await readBody(req, MAX_DROP_BODY), {}) || {}
+          const body = await readJsonBody(req, {}, MAX_DROP_BODY)
           const raw = typeof body.data === 'string' ? body.data : ''
           if (!raw) { json(res, 400, { ok: false, error: '没有收到整合包内容' }); return }
           bytes = Buffer.from(raw, 'base64')
@@ -938,7 +938,7 @@ export default {
     // —— 预览 ——
     route('/dsh-modpack-kit/api/inspect', async (req, res) => {
       if (!needPost(req, res)) return
-      const body = asJson(await readBody(req), {})
+      const body = await readJsonBody(req)
       try {
         const inspected = await inspectInput(body)
         const compat = compatFor(inspected.manifest)
@@ -1123,7 +1123,7 @@ export default {
 
     route('/dsh-modpack-kit/api/install', async (req, res) => {
       if (!needPost(req, res)) return
-      const body = asJson(await readBody(req), {})
+      const body = await readJsonBody(req)
       if (body.async === true || body.background === true) {
         const job = startInstallJob(body, body.label ? String(body.label) : undefined)
         json(res, 200, { ok: true, async: true, job: publicJob(job) })
@@ -1136,7 +1136,7 @@ export default {
     // 装完的追问：把刚才跳过的那些换成包内版本
     route('/dsh-modpack-kit/api/install/replace', async (req, res) => {
       if (!needPost(req, res)) return
-      const body = asJson(await readBody(req), {})
+      const body = await readJsonBody(req)
       const token = String(body.token || '')
       const item = pendingInstalls.get(token)
       if (!item) { json(res, 400, { ok: false, error: '这次安装的上下文已过期，请重新读一遍整合包' }); return }
@@ -1174,7 +1174,7 @@ export default {
     // 删掉某一条：按 at 时间戳匹配
     route('/dsh-modpack-kit/api/history/remove', async (req, res) => {
       if (!needPost(req, res)) return
-      const body = asJson(await readBody(req), {}) || {}
+      const body = await readJsonBody(req)
       const items = removeHistory(body.at)
       appendLog('history remove ' + String((body && body.at) || '') + ' left=' + items.length)
       json(res, 200, { ok: true, items })

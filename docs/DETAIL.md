@@ -1,36 +1,43 @@
 # 整合包（dsh-modpack-kit）
 
-类似 HMCL / PCL 这类我的世界启动器的整合包工具：把多个 DSH 插件连同配置与数据打成一个 `.dshpack`，一次装好。支持完整包（自带插件文件，裸 DSH 也能装）与轻量包（只记名字与版本，安装时联网取包）。
+把多个 DSH 插件连同配置与数据打成一个 `.dshpack`，在另一台机器上一次装好。有插件市场时按市场版本装、识别成分组；没有市场时裸 DSH 也能用包内的独立安装器装完。
 
 ## 能做什么
 
-- **打包**：从「本机已装」或「插件市场目录」挑插件，逐个可选版本；两种形态——完整包（插件文件进包，目标机器只装 DSH 本体即可装）、轻量包（只记名字/版本，安装时从市场取包）。
-- **逐插件定制**：「插件预设」只打插件默认配置；「自定义配置」带上本机配置条目与数据快照（来源是本机时连代码改动一起打）。默认插件预设，每行最左边的徽标显示来源（市场版 / 本机版）。
-- **只列真正的插件**：`listInstalled` 从 profile 依赖 + `bundles` 出发递归，把父插件带进来的组件标成 `isDirect: false` 并记 `transitiveOf`；打包、安装、安装器都跳过它们，避免一个插件被当成九个。
-- **安装**：读包 → 校验完整性 → 扫描 → 兼容检查 → 逐插件交给宿主 `pluginManager.installBundle`（不可用或报错时退回命令行 `dsh plugin add`）→ 登记启用清单 → 回填配置与数据。
-- **已装先跳过**：按插件名判定，先跳过其余照装；装完列出「本机版本 → 包内版本」，由你选「直接完成」或「替换为包内版本」。
-- **市场版身份**：市场版来源直接按 `名字@版本` 装，不先问 registry；轻量包取回代码后也按版本装，失败才退回 `file:` 副本并提示「市场会显示成本地安装」。
-- **分组**：读插件市场的 `.dsh-market/state.json`，按你的分组折叠展示「已装」，组头带「一键加入 / 清空本组」；按组打包会把组名写进清单，装到同样装了市场的机器上并进同名分组。
-- **分类 / 搜索 / 分页**：分类即市场 23 个分区；首屏只列本机已装、不联网，搜索或点分类才查目录，服务端分页（默认每页 20 条），底部「加载更多」。
-- **三处入口**：设置页、侧边栏、插件页各一个开关，改了立刻挂上或撤下；接口层拒绝三处全关，免得没有入口关回来。
-- **装完是否启用**：「安装后直接启用」默认关；关的时候依赖照写，但把 `dsh.profile.bundles` 精确撤回原样——重启也不加载。
-- **读取方式**：「选择文件…」「浏览文件夹…」、手写目录、「已导入的整合包」列表（内存里最多 8 份，显示打包时的名字/作者/描述），或 https 链接。拖拽入口已去掉（外壳会接管文件拖放）。
+- **打包**：从「本机已装」或「插件市场目录」挑插件，逐个选版本与来源；三种策略——完整包、仅下载码、混合包。
+- **逐插件定制**：「插件预设」只带插件默认配置，「自定义配置」带上本机配置条目与数据快照（本机来源时连代码改动一起打）。
+- **只列真正的插件**：从 profile 依赖与 `bundles` 递归，父插件带进来的组件标 `isDirect: false`，打包、安装、安装器一致跳过。
+- **安装**：读包 → 校验 sha256 → 扫描 → 兼容检查 → 逐插件交给宿主 `pluginManager.installBundle`（不可用或报错退回 `dsh plugin add`）→ 登记启用 → 回填配置与数据。
+- **已装先跳过**：按插件名跳过，装完列出「本机 → 包内」，由你决定是否替换为包内版本。
+- **入口**：设置页、侧边栏、插件页三处各一开关，接口层拒绝三处全关。
+- **读取方式**：「选择文件…」「浏览文件夹…」、手写目录、「已导入的整合包」列表（内存里最多 8 份，带打包时的名字/作者/描述）、https 链接。
 
 ## 怎么用
 
 1. 从左侧栏、设置页或插件页进入「整合包」。
-2. 「打包」页勾选插件（首屏是本机已装）→ 设包名与选项 → 打包；看完安全报告与兼容提示后下载或存档。
-3. 换到目标机器：装本插件，或直接跑包里的 `install/` 安装器 → 选文件或填链接 → 检测 → 安装。
-4. 重启 DSH 让新插件生效。
+2. 勾选插件 → 选打包策略 → 打包；看完安全报告与兼容提示后下载或存档。
+3. 目标机器：装本插件，或直接跑包里的 `install/` 安装器 → 选文件或填链接 → 检测 → 安装。
+4. 重启 DSH 生效。
+
+## 三种打包策略
+
+界面这一栏叫「打包策略（必选）」，三块卡片按你勾的插件实时判定，不能选的整块灰显、点一下只弹原因。
+
+| 策略 | 进包内容 | 安装时 | 体积 |
+| --- | --- | --- | --- |
+| `full` | 清单 + `plugins/` + 配置 + 数据 + 报告 + 安装器 | 先按 `名字@版本` 从市场装，失败/离线退回包内副本 | 最大 |
+| `lite` | 清单 + 版本号 + 报告 | 联网按版本取包，代码进内存扫 | 最小 |
+| `hybrid` | 清单 + 版本号 + 配置/数据；没有确定版本或选了「连本机改动一起打」的插件才带 `plugins/` | 包里有目录的直接装（不联网），其余按版本取 | 接近 `lite` |
+
+判定只有一份：`index.js` 的 `computePlan(selection)`，`POST /pack/plan` 返回它，`POST /pack` 打包前再算一次，`lite` / `hybrid` 不可用直接 400。`lite` 的硬条件是有确定版本且没有插件选「自定义配置」；`hybrid` 只拦「没版本、本机又没代码」。
 
 ## 安全模型
 
-- 检测是**静态**的：只读文件比对规则，不执行、不 import、不跑安装脚本。拦得住明显的密钥夹带与可疑写法，但**不替代杀毒软件**，也不证明插件安全。
-- 打包前**强制**扫描：开关显示但点不动，API 写 `scanBeforePack: false` 也会被拉回 `true`。安装前再扫一次（可关，默认开）。
-- 命中原文只在内存里比对；报告与历史只留规则名、文件、行号与掩码（如 `sk****（32 字符已隐藏）`）。
-- 检出高危时任务停在 `paused`，确认「我知道在干什么」后从检测点续跑（不重新收集、不重复检测），清单记 `security.acknowledged`。
-- `integrity.json` 记每个文件的 sha256；安装前校验，缺失或对不上直接阻断（只有显式 force 才越过）。
-- 解压有上限：条目数、单文件、总大小、压缩比；拒绝绝对路径、`..`、盘符、反斜杠、符号链接与加密条目。
+- 检测是静态的：只读文件比对规则，不执行、不 import、不跑安装脚本。能拦明显的密钥夹带与可疑写法，但不替代杀毒软件。
+- 打包前强制扫描（开关点不动，写 `scanBeforePack: false` 会被拉回）；安装前再扫一次（默认开）。
+- 命中原文只在内存比对；报告与历史只留规则名、文件、行号与掩码。
+- 高危先停在 `paused`，确认后从检测点续跑（不重新收集、不重复检测），清单记 `security.acknowledged`。
+- `integrity.json` 记每个文件 sha256，安装前校验，缺失或对不上直接阻断（显式 force 才越过）；解压有条目数、单文件、总大小、压缩比上限，拒绝绝对路径、`..`、符号链接与加密条目。
 - 只放 https 与白名单域名，逐跳校验重定向，流式限体积。
 
 ## 包格式
@@ -38,94 +45,61 @@
 ```
 dsh-modpack.json      清单：格式、插件、选项、安全摘要
 README.txt            不依赖本插件的手工安装说明
-security/report.txt   检测报告（只有类型、位置、掩码）
+security/report.txt   检测报告（规则、位置、掩码）
 integrity.json        sha256 清单
 install/install.mjs   独立安装器（裸 DSH 可用）
 install/install.cmd   Windows 双击入口
 install/install.sh    shell 入口
-plugins/<name>/**     完整版才有
+plugins/<name>/**     只有带本体的策略才有
 configs/<name>.json   抓到的配置条目
-data/<目录名>/**      插件数据快照（小体积文本）
+data/<目录名>/**      插件数据快照（小文本）
 ```
 
-文件名 `<包名>-<日期>-<full|lite|hybrid>.dshpack`。
-
-| 策略 | 进包的内容 | 安装时 |
-| --- | --- | --- |
-| `full` | 清单 + `plugins/` + 配置 + 数据 + 报告 + 安装器 | 先去 `~/.dsh/dsh-modpack/vendor/<包>-<hash>/` 再登记，删了解压目录也不会断 |
-| `lite` | 清单 + 版本号 + 报告（无 `plugins/`、无配置） | 按 `名字@版本` 从 npm 取包，代码直接进内存扫描，不落临时目录 |
-| `hybrid` | 清单 + 版本号 + 配置/数据/补丁片段；**没有确定版本、或选了「连本机改动一起打」的插件**才带 `plugins/<name>/` | 按插件分档：包里有目录的直接 vendor 后装（不联网），没有的按 `名字@版本` 取包 |
-
-三种策略都带 `install/` 独立安装器。安装侧判断「这个插件要不要联网」只看包里有没有 `plugins/<目录>/`，不看整包 `format`，所以混合包可以一部分带本体、一部分只记版本。
+文件名 `<包名>-<日期>-<full|lite|hybrid>.dshpack`。安装侧判断「要不要联网」只看包里有没有 `plugins/<目录>/`，不看整包 `format`，所以混合包可以一部分带本体、一部分只记版本。完整包会先把本体复制到 `~/.dsh/dsh-modpack/vendor/<包>-<hash>/` 再登记，删掉解压目录也不断。
 
 ## 配置与数据
 
-- 配置来源是 profile 的 `cordis.patch.yml`：按 `name`/`id` 取该插件整段 `config`（含 `disabled`）存进 `configs/<name>.json`；安装时只替换这一条，其它字节原样保留，包里没有的追加在末尾。
-- 保真：嵌套映射、数组、空数组/空对象、中文、多行字符串、布尔与数字都原样往返（空容器写成 `key: []` / `key: {}`）。
-- 擦除：`redactConfig` 按归一化键名完全相等判凭据（`apiKeyEnv` 不误伤），值命中 `sk-` / `gh[pousr]_` / `xox[baprs]-` / `AKIA` 也换成 `${REDACTED}`；路径写进 `configRedacted`，安装时提示重填。安装时不再二次擦除。
-- 数据快照：只收 `~/.dsh/<目录>` 下的文本小文件（`.json/.md/.txt/.yml/.yaml/.csv/.toml/.ini`，单文件 ≤1 MB、整包 ≤8 MB），凭证类文件名跳过；文本再经 `scrubText` 擦一遍，命中数记 `dataRedacted`。安装时写回 `~/.dsh/<目录>`，**默认不覆盖已有文件**（`--replace` 才覆盖）。
+- 配置来自 profile 的 `cordis.patch.yml`：按 `name`/`id` 取整段 `config`（含 `disabled`）存进 `configs/<name>.json`；安装时只替换这一条，其它字节原样保留，没有的追加在末尾。
+- 保真：嵌套映射、数组、空容器、中文、多行字符串、布尔与数字都原样往返。
+- 擦除：`redactConfig` 按归一化键名完全相等判凭据（`apiKeyEnv` 不误伤），值命中 `sk-` / `gh[pousr]_` / `xox[baprs]-` / `AKIA` 也换成 `${REDACTED}`；路径写进 `configRedacted`，安装时提示重填。
+- 数据快照：只收 `~/.dsh/<目录>` 下的文本小文件（≤1 MB/个、整包 ≤8 MB），凭证类文件名跳过，文本再过一遍 `scrubText`；安装时写回，默认不覆盖已有文件（`--replace` 才覆盖）。
 - 插件内安装与包内安装器两条路径规则一致。
 
 ## 与插件市场
 
-- 目录：读市场自己的 `dsh-plugin-catalog`（CDN `index.json` 优先，失败退 npm tarball）；分区名与条目数跟市场一致，索引落在 `<DSH_HOME>/dsh-modpack/catalog/market.json`。
-- 市场判定只看依赖写法：`file:` / `link:` 算本地，semver 算市场版。所以市场来源的插件一律 `名字@版本` 装。
-- 完整包的安装优先级（方案 A）：清单里有确定版本时先按 `名字@版本` 装（`install.mjs` 的 `preferMarketSpec`），成功则 profile 依赖是 `^版本`、市场显示市场版；失败或离线才 `installSpec("file:" + dir)` 退回包内副本，依赖变 `file:`、市场显示本地安装，结果里明确提示。`options.preferMarket === false` 可整段关掉这条优先级。
-- 没装市场：打包、装包、强制检测、完整性/兼容/许可证校验、配置回填、三处入口都照常，只少 Discover 界面与目录搜索（建一次索引即恢复）。
-- 分组：`readMarketGroups` 只读不写；`applyMarketGroups` 在安装时做「同名组并成员、新组追加、其它键原样保留」；目标没装市场（没有 `.dsh-market`）就不写，只说明一句。
-
-- 入口形态：设置里是一整节；侧边栏是独立页面；插件页里只是一条标签，渲染时不再重复页头，也不自己造滚动区（交给插件页滚），高度由内容决定（`Home` 的 `surface === "plugins"` 分支）。首屏读状态失败会自动退避重试三次并给一个「重试」按钮——宿主刚起来时会话还没就绪，第一次常常拿不到 401 之外的东西。
-
-## 离线安装与折叠
-
-- `options.offline === true` 或 `probeRegistry()` 探不到时，安装只看包里有没有该插件目录：有就装包内副本（`file:`），没有就逐条报「只记版本、没带本体」。
-- 安全检测与兼容性都用 `FoldBox` 包起来（有高危 / 有 error 时默认展开，否则收起）；`FoldBox` 在 `client.js`。
-- 最近记录：`FoldBox` 支持 `actions`（标题行上的按钮，点击不会连带展开/收起）；设置页把「清空最近记录」放在标题行，展开后每行右侧还有「删除」。后台是 `lib/store.mjs` 的 `clearHistory()` / `removeHistory(at)`，对应 `POST /history/clear` 与 `POST /history/remove`（body `{at}`），返回最新 `items`。
-
-## 打包策略的判定
-
-- 判定逻辑只有一份：`index.js` 的 `computePlan(selection)`，`POST /pack/plan` 直接返回它，`POST /pack` 在真正打包前也调一次，`lite` / `hybrid` 不可用就 400 并带上 `plan`。
-- 每行判定：`versionOf()` 从 `spec`（可能是 `名字@版本`）与已装版本里抠 semver，`semver: false` 视为没有确定版本；`choice: "custom"` 记为要带自定义配置。
-- `lite` 的 blockers：没版本号、或有插件要带自定义配置；`hybrid` 的 blockers：没版本号且本机又没装（取不到代码）。`full` 永远可用，本机没代码时只在 note 里说明打包要联网一次。
-- 返回结构：`{ strategies: [{id,title,online,ok,reason,blockers,note}], plugins, counts }`；界面据此灰显、弹原因，并在当前策略失效时禁用打包。
+- 目录与市场同源（`dsh-plugin-catalog` 的 `index.json`，失败退 npm tarball），分区即市场 23 类；首屏只列本机已装，搜索或点分类才查目录，服务端分页。
+- 市场判定只看依赖写法：`file:` / `link:` 算本地，semver 算市场版。所以市场来源一律按 `名字@版本` 装；完整包失败或离线才退回 `file:` 副本，并明确提示「市场会显示成本地安装」。
+- 分组：只读 `.dsh-market/state.json` 做折叠展示；按组打包会把组名写进清单，装到同样装了市场的机器上并进同名分组（`applyMarketGroups`，同名组并成员、其它键原样保留）。
+- 没装市场：打包、装包、检测、校验、配置回填、三处入口照常，只少 Discover 界面与目录搜索。
 
 ## 安装顺序与进度窗
 
 - 打包与安装共用任务队列：`POST /pack|/install { async: true }` 立即返回 job，`GET /jobs` 轮询；`/jobs/cancel` 终止（包在内存组装，取消不落盘）、`/jobs/ack` 续跑、`/jobs/dismiss` 删记录、`/jobs/clear` 清收尾。
-- 悬浮进度窗：左下角起，按住标题可拖，位置存 `localStorage`（`dsh-modpack-kit:dock-pos`）；没任务自动收起，只留「进度」按钮唤出。标题栏按钮与拖动不共享判定（`closest("button")` 直接返回）。
-- 收尾：`jobKeepSeconds` 默认 0（留到重启或手动清）；正数按秒清，失败/取消取 `min(该值, 15 秒)`；心跳超 10 分钟的 running 先判失败再清走；`paused` 永不自动清。
-- 完成任务可点「下载安装包」：切到打包页、回填结果并滚到下载区；结果存在客户端缓存里，切页签不丢。
-- 安装预览：逐插件勾选（未勾的作为 `options.only` 的补集排除）、有问题的插件置顶（`compat.findings` 里 `level !== "info"` 的条目按插件分组显示）、每个带配置的插件可选「包内配置 / 保持本机」（`options.configChoice[name] = "pack" | "local"`）、「装后整体启用」（`enableBundles`）与「装后同步市场分组」（`options.syncGroups`，默认开）。
-- 策略可用性：`POST /pack/plan` 返回三张卡片能否选与原因（缺 semver 版本的插件让 `lite` 灰掉；`hybrid` 只拦「没版本、本机又没代码」的插件，因为其余的可以连本体一起打）。
-- 体积上限：`maxPackBytes` 默认 512 MB（16~4096），单个下载 `maxDownloadBytes` 默认 256 MB；允许同时打多个包。
+- 悬浮进度窗可拖动（位置存 `localStorage`），没任务时收起只留「进度」按钮；收尾记录按 `jobKeepSeconds`（默认 0）与心跳（running 超 10 分钟判失败）处理。
+- 安装预览：逐插件勾选、有问题的置顶（缺依赖 / 引擎版本不符）、每个带配置的插件可选「包内配置 / 保持本机」、「装后整体启用」、「装后同步市场分组」。
+- 离线安装：勾「离线安装」或探不到 registry 时，只装带本体的插件；只记版本的会逐条说明「联网后再试」。
 
 ## 网络层（`lib/net.mjs`）
 
-- `assertAllowedUrl`：只放 https，主机名须在白名单（含子域），白名单版本号 `HOSTS_VERSION` 控制老配置合并。
-- `requestBuffer`：逐跳手动跟随重定向（最多 6 跳），每跳重新校验；超时 `netTimeoutSeconds`（默认 60）、`netRetries`；fetch 全失败且 `curlFallback` 为真时用系统 `curl -i`（不带 `-L`，重定向仍由我们校验），`--max-filesize` 与响应上限双保险。
-- `npmMetadata`：版本清单按「精简（`application/vnd.npm.install-v1+json`）→ 完整 → 单版本（`/名字/版本`）」三层退让；体积上限 `metadataLimit(config)` 读 `maxMetadataBytes`（默认 64 MB，夹 4~512）。超限时错误会说明两条出路：调大上限，或给确定版本号。
-- 传输压缩：fetch 带 `accept-encoding: gzip, deflate, br`，curl 兜底带 `--compressed`；`requestJson` 不再覆盖调用方传入的 `accept`。
-- 轻量包安装：`context.resolveSourceEntries` 把 tarball 解出的条目直接交给 `scanEntries`（内存里扫、不落临时目录），再按 `名字@版本` 交给宿主安装；宿主没提供这条能力时才退回「解到临时目录再扫」。
+- `requestBuffer`：逐跳校验重定向（最多 6 跳），白名单版本 `HOSTS_VERSION` 控制老配置合并；超时 `netTimeoutSeconds`（默认 60），失败可退系统 `curl`（不带 `-L`，重定向仍由我们校验）。
+- `npmMetadata`：版本清单按「精简 → 完整 → 单版本」三层退让，上限 `maxMetadataBytes`（默认 64 MB，夹 4~512）；超限提示调大上限或指定版本号。
+- 传输压缩：fetch 带 `accept-encoding`，curl 兜底带 `--compressed`。
 
 ## 扩展接口
 
-- 路由：Host 能力全在 `/dsh-modpack-kit/api/*`，界面只是消费者，换 UI 不用动后端。
-- 安装：`installPack` 的 `context.installBundle` 优先（宿主 `pluginManager.installBundle(spec, { enabled, expected })`，pnpm、激活、回滚都归宿主），缺省或抛错退回 `context.runCli`。
-- 扫描：`scanEntries(entries, { extraRules })`；规则形状见 `SECRET_RULES` / `MALWARE_RULES`；同内容文件按 sha1 复用结论，文件名单独重算。
-- 擦除：`redactConfig(value)` + `SECRET_KEY_SET` / `SECRET_VALUE_PATTERN`；设置项 `extraScanRules` 直接写 `settings.json`，打包与安装都并入扫描器（页面不暴露）。
-- 压缩：`PRECOMPRESSED_EXT` 里的扩展名直接存储，>2 MiB 用 deflate 6 级，其余 9 级。
-- 清单：`extensions` 字段留给二次开发，安装端原样保留；`schema` 高于支持版本时报「请先升级 dsh-modpack-kit」。
-- 目录：`CATALOG_SOURCES` 换地址；`catalogRefreshHours`（1~168）与 `catalogPageSize`（5~100）可调；新增分区不用改代码，读 `metadata.categories`，`CATEGORY_FALLBACK` 只是首次同步前的兜底。
-- 显示位：`client.js` 的 `PLACEMENT_MOUNTS` 每组开关对应一组槽位，加第四个位置就往里加一组并在设置页加开关。
-- 分组：`lib/groups.mjs` 的 `readMarketGroups` / `groupViews` / `hasMarket` / `applyMarketGroups`；`status` 下发 `groups`、`ungrouped`、`groupSource`。
+- 路由：Host 能力全在 `/dsh-modpack-kit/api/*`，界面只是消费者。
+- 安装：`context.installBundle` 优先，缺省或抛错退回 `context.runCli`。
+- 扫描 / 擦除：`scanEntries(entries, { extraRules })`、`redactConfig(value)`；设置项 `extraScanRules` 直接写 `settings.json` 即并入。
+- 清单：`extensions` 字段留给二次开发；`schema` 高于支持版本时报「请先升级」。
+- 目录：`CATALOG_SOURCES`、`catalogRefreshHours`、`catalogPageSize` 可调，分区读 `metadata.categories`。
+- 显示位与分组：`PLACEMENT_MOUNTS` 加位置；`lib/groups.mjs` 的 `readMarketGroups` / `groupViews` / `hasMarket` / `applyMarketGroups`。
 
 ## 已知限制
 
-- 只打 npm 上发布的包或本机已装目录，不处理 git 仓库直装。
+- 只处理 npm 上发布的包与本机已装目录，不处理 git 直装。
 - 配置抓取走 YAML 子集解析，遇到不支持的写法整体放弃并提示，不猜。
-- peer 依赖只报「缺失/冲突」；`optional` 的 peer 不影响结论。
-- 扫描是启发式的，会漏也会误报；安装效果需重启 DSH 才能确认。
-- 目录是市场 npm 侧的条目（约 5600 条），只能从 GitHub 装的不在其中；索引 24 小时内不重复取。
+- peer 依赖只报「缺失/冲突」，`optional` 不影响结论；扫描是启发式的，会漏也会误报。
+- 装完需重启 DSH 才能确认效果。
 
 ## 合规
 
