@@ -65,6 +65,8 @@ data/<目录名>/**      插件数据快照（小体积文本）
 - 没装市场：打包、装包、强制检测、完整性/兼容/许可证校验、配置回填、三处入口都照常，只少 Discover 界面与目录搜索（建一次索引即恢复）。
 - 分组：`readMarketGroups` 只读不写；`applyMarketGroups` 在安装时做「同名组并成员、新组追加、其它键原样保留」；目标没装市场（没有 `.dsh-market`）就不写，只说明一句。
 
+- 入口形态：设置里是一整节；侧边栏是独立页面；插件页里只是一条标签，渲染时不再重复页头，整块占满那栏的高度并在内部滚动（`Home` 的 `surface === "plugins"` 分支）。
+
 ## 安装顺序与进度窗
 
 - 打包与安装共用任务队列：`POST /pack|/install { async: true }` 立即返回 job，`GET /jobs` 轮询；`/jobs/cancel` 终止（包在内存组装，取消不落盘）、`/jobs/ack` 续跑、`/jobs/dismiss` 删记录、`/jobs/clear` 清收尾。

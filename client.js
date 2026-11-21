@@ -1611,6 +1611,10 @@ window.__ModuleLoader__.load({
       const [tab, setTab] = useState("pack")
       const jobs = useJobs()
       const status = props.status
+      const surface = (props && props.surface) || "sidebar"
+      // 插件页里的那一栏外面已经有一层页头与标签：嵌进去不能再摆一遍大标题，
+      // 否则同一屏里会出现两个名字、两套边距，看着像画坏了。
+      const embedded = surface === "plugins"
       const [packResult, setPackResult] = useState(() => readPackValue())
       const [focus, setFocus] = useState(0)
       useEffect(() => subscribePack((value) => { setPackResult(value) }), [])
@@ -1636,11 +1640,53 @@ window.__ModuleLoader__.load({
         onClick: () => setTab(key),
         style: {
           ...btn,
+          fontSize: embedded ? "12px" : btn.fontSize,
+          padding: embedded ? "3px 9px" : btn.padding,
           borderColor: tab === key ? "transparent" : "var(--dsw-alias-border-l2)",
           background: tab === key ? "var(--dsw-alias-fill-primary, #3b6cf6)" : "transparent",
           color: tab === key ? "#fff" : "var(--dsw-alias-label-primary)",
         },
       }, text)
+
+      const panels = [
+        tab === "pack" ? h(PackPanel, { status, jobs, result: packResult, setResult: savePackResult, focus }) : null,
+        tab === "install" ? h(InstallPanel, { status }) : null,
+        tab === "settings" ? h(SettingsPanel, { status }) : null,
+      ]
+      const footNote = h("div", { style: hint }, "说明：整合包只打包你选择的插件与必要配置。打包与安装安全检测在内存中进行，命中原文不落盘；请遵守插件作者许可证与你所在地区的法律法规。")
+      const envLine = h("span", { style: { ...hint, marginLeft: "auto" } },
+        status ? ("DSH " + (status.dshVersion || "?") + " · 已装 " + ((status.installed || []).length) + " 个 · v" + (status.pluginVersion || "?")) : "读取环境…")
+
+      // 嵌在插件页标签里：不重复页头，自己占满剩余高度并只在内部滚动
+      if (embedded) {
+        return h("div", {
+          style: {
+            height: "100%",
+            minHeight: "360px",
+            boxSizing: "border-box",
+            display: "flex",
+            flexDirection: "column",
+            color: "var(--dsw-alias-label-primary)",
+            position: "relative",
+          },
+        },
+          h("div", {
+            style: {
+              flex: "1 1 auto",
+              minHeight: 0,
+              overflow: "auto",
+              boxSizing: "border-box",
+              padding: "10px 4px 20px",
+            },
+          },
+            h("div", { style: { maxWidth: "1020px", margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: "10px" } },
+              h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine),
+              panels,
+              footNote,
+              h(RepoFooter, null))),
+          h(JobDock, { jobs, onOpenResult: openResult })
+        )
+      }
 
       return h("div", {
         style: { height: "100%", overflow: "auto", boxSizing: "border-box", padding: "22px 26px 44px", color: "var(--dsw-alias-label-primary)", position: "relative" },
@@ -1649,13 +1695,9 @@ window.__ModuleLoader__.load({
           h("div", { style: { display: "flex", alignItems: "baseline", gap: "10px", flexWrap: "wrap" } },
             h("h2", { style: { margin: 0, fontSize: "20px", fontWeight: 600 } }, "整合包modpack-kit"),
             h("span", { style: hint }, "把多个插件打成一个 .dshpack：完整版自带本体，轻量版联网取包")),
-          h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)),
-            h("span", { style: { ...hint, marginLeft: "auto" } },
-              status ? ("DSH " + (status.dshVersion || "?") + " · 已装 " + ((status.installed || []).length) + " 个 · v" + (status.pluginVersion || "?")) : "读取环境…")),
-          tab === "pack" ? h(PackPanel, { status, jobs, result: packResult, setResult: savePackResult, focus }) : null,
-          tab === "install" ? h(InstallPanel, { status }) : null,
-          tab === "settings" ? h(SettingsPanel, { status }) : null,
-          h("div", { style: hint }, "说明：整合包只打包你选择的插件与必要配置。打包与安装安全检测在内存中进行，命中原文不落盘；请遵守插件作者许可证与你所在地区的法律法规。"),
+          h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine),
+          panels,
+          footNote,
           h(RepoFooter, null)),
         h(JobDock, { jobs, onOpenResult: openResult })
       )

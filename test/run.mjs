@@ -1564,6 +1564,14 @@ test('显示名：侧栏、设置、插件页与页面标题都叫「整合包mo
   assertEqual(zh.meta.title, '整合包modpack-kit')
 })
 
+test('嵌进插件页时不重复页头，自己占满高度', () => {
+  const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert(source.includes('const embedded = surface === "plugins"'), 'client.js 应按 surface 判断是不是嵌在插件页里')
+  assert(source.includes('minHeight: "360px"'), '内嵌时给自己一个最小高度，免得被挤成一条缝')
+  assert(source.includes('h(Home, { status, surface: (props && props.surface) || "sidebar" })'), 'Page 要把 surface 传给 Home')
+  const headings = source.match(/h\("h2"/g) || []
+  assertEqual(headings.length, 1, '大标题只该在侧栏模式下出现一次，嵌进去不再重复')
+})
 test('选插件界面：分组可折叠、可一键加入', () => {
   const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   for (const mark of ['const sections = useMemo', 'const renderList = () =>', '一键加入', '清空本组', 'folded[section.name]', 'renderOne(entry)']) {
