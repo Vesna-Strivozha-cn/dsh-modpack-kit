@@ -1552,6 +1552,18 @@ test('选插件界面：分组头不再算兼容，明细代码一并清掉', ()
   assert(host.includes('compat: compatFor(inspected.manifest)'), 'inspect 的兼容检查要保留')
 })
 
+test('显示名：侧栏、设置、插件页与页面标题都叫「整合包modpack-kit」', () => {
+  const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  const labels = source.match(/label: \(\) => "[^"]+"/g) || []
+  const pluginLabels = labels.filter((line) => line.includes('整合包'))
+  assertEqual(pluginLabels.length, 4)
+  for (const line of pluginLabels) assert(line.includes('整合包modpack-kit'), '入口显示名应是整合包modpack-kit：' + line)
+  assert(!pluginLabels.some((line) => line === 'label: () => "整合包"'), '不该还留着旧的「整合包」')
+  assert(source.includes('}, "整合包modpack-kit")'), '页面标题也应同步')
+  const zh = JSON.parse(fs.readFileSync(new URL('../locale/zh.json', import.meta.url), 'utf8'))
+  assertEqual(zh.meta.title, '整合包modpack-kit')
+})
+
 test('选插件界面：分组可折叠、可一键加入', () => {
   const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   for (const mark of ['const sections = useMemo', 'const renderList = () =>', '一键加入', '清空本组', 'folded[section.name]', 'renderOne(entry)']) {

@@ -1,4 +1,4 @@
-# dsh-modpack-kit（DSH 整合包）
+# 整合包modpack-kit（dsh-modpack-kit）
 
 为 DeepSeek Harness 提供类似 HMCL / PCL 这类「我的世界启动器」的整合包打包与安装能力：把多个插件连同各自的配置与数据打成一个 `.dshpack`，一次安装到位。
 
@@ -28,7 +28,7 @@ dsh plugin --profile desktop add dsh-modpack-kit
 dsh plugin --profile desktop add github:Vesna-Strivozha-cn/dsh-modpack-kit
 ```
 
-装完重启 DSH，左侧栏出现「整合包」。
+装完重启 DSH，左侧栏出现「整合包modpack-kit」。
 
 ## 与插件市场：联动，以及没有它时差在哪
 
