@@ -133,9 +133,10 @@ window.__ModuleLoader__.load({
     }
 
     async function api(pathname, body) {
-      const init = body === undefined ? { headers: { Accept: "application/json" } } : {
+      const init = body === undefined ? { headers: { Accept: "application/json" }, credentials: "same-origin" } : {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify(body),
       }
       let res
@@ -1657,33 +1658,23 @@ window.__ModuleLoader__.load({
       const envLine = h("span", { style: { ...hint, marginLeft: "auto" } },
         status ? ("DSH " + (status.dshVersion || "?") + " · 已装 " + ((status.installed || []).length) + " 个 · v" + (status.pluginVersion || "?")) : "读取环境…")
 
-      // 嵌在插件页标签里：不重复页头，自己占满剩余高度并只在内部滚动
+      // 嵌在插件页标签里：不重复页头，也不自己再造一层滚动区——外层插件页本来就会滚，
+      // 里面再套一个固定高度的滚轮，遇到外层高度是 auto 时会被压成一条缝。
       if (embedded) {
         return h("div", {
           style: {
-            height: "100%",
-            minHeight: "360px",
-            boxSizing: "border-box",
             display: "flex",
             flexDirection: "column",
             color: "var(--dsw-alias-label-primary)",
+            padding: "10px 2px 24px",
             position: "relative",
           },
         },
-          h("div", {
-            style: {
-              flex: "1 1 auto",
-              minHeight: 0,
-              overflow: "auto",
-              boxSizing: "border-box",
-              padding: "10px 4px 20px",
-            },
-          },
-            h("div", { style: { maxWidth: "1020px", margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: "10px" } },
-              h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine),
-              panels,
-              footNote,
-              h(RepoFooter, null))),
+          h("div", { style: { maxWidth: "1020px", margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: "10px" } },
+            h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine),
+            panels,
+            footNote,
+            h(RepoFooter, null)),
           h(JobDock, { jobs, onOpenResult: openResult })
         )
       }
@@ -1714,19 +1705,43 @@ window.__ModuleLoader__.load({
     function Page(props) {
       const [status, setStatus] = useState(null)
       const [error, setError] = useState("")
-      const reload = useCallback(async () => {
+      const [tries, setTries] = useState(0)
+      const alive = useRef(true)
+      useEffect(() => () => { alive.current = false }, [])
+      // 宿主刚起来、会话还在建的时候，第一次可能拿不到状态（401/网络没就绪）。
+      // 自己退避重试几次，别让用户看到一块红字或者一块空白。
+      const load = useCallback(async (left) => {
         try {
           const data = await api("/status")
+          if (!alive.current) return
           if (data && data.ok) {
             setStatus(data)
             setError("")
             if (data.placements) setPlacement(data.placements)
-          } else setError((data && data.error) || "读取状态失败")
-        } catch (e) { setError(String((e && e.message) || e)) }
+            setTries(0)
+            return
+          }
+          setError((data && data.error) || "读取状态失败")
+        } catch (e) {
+          if (!alive.current) return
+          if (left > 0) {
+            setTimeout(() => { load(left - 1) }, 500 * (4 - left))
+            setTries(left)
+            return
+          }
+          setError(String((e && e.message) || e))
+        }
       }, [])
-      useEffect(() => { reload() }, [reload])
-      if (error) return h("div", { style: { padding: "24px", color: "#ff6b6b", fontSize: "13px" } }, "整合包没起来：" + error)
-      if (!status) return h("div", { style: { padding: "24px", color: "var(--dsw-alias-label-tertiary)", fontSize: "13px" } }, "整合包：读取环境…")
+      useEffect(() => { load(3) }, [load])
+      if (error) {
+        return h("div", { style: { padding: "20px 24px", color: "#ff6b6b", fontSize: "13px", display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" } },
+          h("span", null, "整合包没起来：" + error),
+          h("button", { type: "button", style: btn, onClick: () => { setError(""); setTries(0); load(3) } }, "重试"))
+      }
+      if (!status) {
+        return h("div", { style: { padding: "20px 24px", color: "var(--dsw-alias-label-tertiary, #8b909b)", fontSize: "13px" } },
+          tries > 0 ? "整合包：还在连 DSH 本体…（自动重试 " + tries + " 次）" : "整合包：读取环境…")
+      }
       return h(Home, { status, surface: (props && props.surface) || "sidebar" })
     }
 

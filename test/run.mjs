@@ -1564,10 +1564,20 @@ test('显示名：侧栏、设置、插件页与页面标题都叫「整合包mo
   assertEqual(zh.meta.title, '整合包modpack-kit')
 })
 
+test('首屏读状态失败会自己重试，不用先去看一眼设置', () => {
+  const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert(source.includes('credentials: "same-origin"'), '请求应带同源凭据，别第一次就 401')
+  assert(source.includes('const load = useCallback(async (left) => {'), 'Page 应有带剩余次数 load')
+  assert(source.includes('load(3)'), '首屏应退避重试几次')
+  assert(source.includes('"重试"'), '失败时给一个手动重试按钮')
+  assert(source.includes('还在连 DSH 本体'), '重试期间文案要说清在连本体')
+  // 内嵌时不再自己造固定高度的滚动区
+  assert(!source.includes('minHeight: "360px"'), '内嵌不要再套固定高度滚动区')
+})
 test('嵌进插件页时不重复页头，自己占满高度', () => {
   const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   assert(source.includes('const embedded = surface === "plugins"'), 'client.js 应按 surface 判断是不是嵌在插件页里')
-  assert(source.includes('minHeight: "360px"'), '内嵌时给自己一个最小高度，免得被挤成一条缝')
+  assert(!source.includes('minHeight: "360px"'), '内嵌时不要再造固定高度的内层滚动区（会被压成一条缝）')
   assert(source.includes('h(Home, { status, surface: (props && props.surface) || "sidebar" })'), 'Page 要把 surface 传给 Home')
   const headings = source.match(/h\("h2"/g) || []
   assertEqual(headings.length, 1, '大标题只该在侧栏模式下出现一次，嵌进去不再重复')
