@@ -151,6 +151,15 @@ test('定位语：默认配置里带那句备注，页面标题与市场描述�
   assertEqual(pkg.version, '0.2.0-1', '版本 0.2.0-1')
 })
 
+test('更新日志不收录预发布版本（-1 这类不写进改动汇总）', () => {
+  const readme = fs.readFileSync(new URL('../README.md', import.meta.url), 'utf8')
+  const at = readme.indexOf('## 更新日志')
+  assert(at >= 0, 'README 要有更新日志段')
+  const section = readme.slice(at)
+  const bad = section.match(/^-\s+\*\*\d+\.\d+\.\d+-\d+\*\*/mu)
+  assert(!bad, '预发布版本不该出现在更新日志里：' + (bad && bad[0]))
+})
+
 // —— 版本清单：billion-context 那种十几 MB 的包 ——
 test('版本清单：超大包能退让到精简清单 / 单版本清单，不再卡在 16 MB', () => {
   const registry = fs.readFileSync(new URL('../lib/registry.mjs', import.meta.url), 'utf8')
