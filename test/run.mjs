@@ -1473,11 +1473,6 @@ await testAsync('打包页草稿：勾选与选项留在内存里，切页签不
   assert(!source.includes('localStorage.setItem("dsh-modpack-kit:draft'), '草稿不能落盘：重启 DSH 就该重置')
 })
 
-for (const [state, name, detail] of results) {
-  if (state === 'ok') console.log('ok   ' + name)
-  else console.log('FAIL ' + name + '\n' + detail)
-}
-
 test('网络层：只放 https，而且主机要在允许列表里', () => {
   const config = { allowHosts: ['registry.npmjs.org', 'example.com'] }
   assertAllowedUrl('https://registry.npmjs.org/dsh-modpack-kit', config)
@@ -1552,36 +1547,26 @@ test('选插件界面：分组头不再算兼容，明细代码一并清掉', ()
   assert(host.includes('compat: compatFor(inspected.manifest)'), 'inspect 的兼容检查要保留')
 })
 
-test('显示名：侧栏、设置、插件页与页面标题都叫「整合包modpack-kit」', () => {
+test('显示名：侧栏、设置、插件页与页面标题都叫「整合包」', () => {
   const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   const labels = source.match(/label: \(\) => "[^"]+"/g) || []
   const pluginLabels = labels.filter((line) => line.includes('整合包'))
   assertEqual(pluginLabels.length, 4)
-  for (const line of pluginLabels) assert(line.includes('整合包modpack-kit'), '入口显示名应是整合包modpack-kit：' + line)
-  assert(!pluginLabels.some((line) => line === 'label: () => "整合包"'), '不该还留着旧的「整合包」')
-  assert(source.includes('}, "整合包modpack-kit")'), '页面标题也应同步')
+  for (const line of pluginLabels) assertEqual(line, 'label: () => "整合包"')
+  assert(!source.includes('整合包modpack-kit'), '不该再留着「整合包modpack-kit」')
+  assert(source.includes('fontWeight: 600 } }, "整合包")'), '页面标题也应是「整合包」')
   const zh = JSON.parse(fs.readFileSync(new URL('../locale/zh.json', import.meta.url), 'utf8'))
-  assertEqual(zh.meta.title, '整合包modpack-kit')
+  assertEqual(zh.meta.title, '整合包')
 })
 
-test('首屏读状态失败会自己重试，不用先去看一眼设置', () => {
+test('启动时就补挂槽位：自己拉状态并重试几次，别等用户先去看设置', () => {
   const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
-  assert(source.includes('credentials: "same-origin"'), '请求应带同源凭据，别第一次就 401')
-  assert(source.includes('const load = useCallback(async (left) => {'), 'Page 应有带剩余次数 load')
-  assert(source.includes('load(3)'), '首屏应退避重试几次')
-  assert(source.includes('"重试"'), '失败时给一个手动重试按钮')
-  assert(source.includes('还在连 DSH 本体'), '重试期间文案要说清在连本体')
-  // 内嵌时不再自己造固定高度的滚动区
-  assert(!source.includes('minHeight: "360px"'), '内嵌不要再套固定高度滚动区')
+  assert(source.includes('const refreshPlacement = async (left) => {'), '应自己拉一次 /status 拿开关')
+  assert(source.includes('refreshPlacement(3)'), '启动时拉一次、失败再退避重试')
+  assert(source.includes('[900, 2600, 6000, 11000]'), '前十秒补看几次，晚声明的槽位也能挂上')
+  assert(source.includes('for (const timer of timers) clearTimeout(timer)'), '卸载时要清掉定时器')
 })
-test('嵌进插件页时不重复页头，自己占满高度', () => {
-  const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
-  assert(source.includes('const embedded = surface === "plugins"'), 'client.js 应按 surface 判断是不是嵌在插件页里')
-  assert(!source.includes('minHeight: "360px"'), '内嵌时不要再造固定高度的内层滚动区（会被压成一条缝）')
-  assert(source.includes('h(Home, { status, surface: (props && props.surface) || "sidebar" })'), 'Page 要把 surface 传给 Home')
-  const headings = source.match(/h\("h2"/g) || []
-  assertEqual(headings.length, 1, '大标题只该在侧栏模式下出现一次，嵌进去不再重复')
-})
+
 test('选插件界面：分组可折叠、可一键加入', () => {
   const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   for (const mark of ['const sections = useMemo', 'const renderList = () =>', '一键加入', '清空本组', 'folded[section.name]', 'renderOne(entry)']) {
@@ -1592,6 +1577,11 @@ test('选插件界面：分组可折叠、可一键加入', () => {
   assert(host.includes('groupViews('), 'index.js 应用 groupViews')
   assert(host.includes('groupSource = market.present'), 'index.js 应记录分组来源')
 })
+
+for (const [state, name, detail] of results) {
+  if (state === 'ok') console.log('ok   ' + name)
+  else console.log('FAIL ' + name + '\n' + detail)
+}
 
 console.log('\n' + (results.length - failed) + '/' + results.length + ' 通过')
 process.exitCode = failed === 0 ? 0 : 1

@@ -1684,7 +1684,7 @@ window.__ModuleLoader__.load({
       },
         h("div", { style: { maxWidth: "1020px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "14px" } },
           h("div", { style: { display: "flex", alignItems: "baseline", gap: "10px", flexWrap: "wrap" } },
-            h("h2", { style: { margin: 0, fontSize: "20px", fontWeight: 600 } }, "整合包modpack-kit"),
+            h("h2", { style: { margin: 0, fontSize: "20px", fontWeight: 600 } }, "整合包"),
             h("span", { style: hint }, "把多个插件打成一个 .dshpack：完整版自带本体，轻量版联网取包")),
           h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine),
           panels,
@@ -1750,14 +1750,14 @@ window.__ModuleLoader__.load({
     // 三处显示位各自注册什么。开关一翻就整组挂上 / 整组撤掉，不动别的插件。
     const PLACEMENT_MOUNTS = {
       settings: () => [
-        { slot: "settings.section", spec: { name: "settings.section", id: "dsh-modpack-kit", order: 45, label: () => "整合包modpack-kit" }, Comp: () => h(Page, { surface: "settings" }) },
-        { slot: "settings.plugins.tab", spec: { name: "settings.plugins.tab", id: "dsh-modpack-kit", order: 70, label: () => "整合包modpack-kit" }, Comp: () => h(Page, { surface: "plugins" }) },
+        { slot: "settings.section", spec: { name: "settings.section", id: "dsh-modpack-kit", order: 45, label: () => "整合包" }, Comp: () => h(Page, { surface: "settings" }) },
+        { slot: "settings.plugins.tab", spec: { name: "settings.plugins.tab", id: "dsh-modpack-kit", order: 70, label: () => "整合包" }, Comp: () => h(Page, { surface: "plugins" }) },
       ],
       pluginsTab: () => [
-        { slot: "plugins.tab", spec: { name: "plugins.tab", id: "dsh-modpack-kit", order: 1, label: () => "整合包modpack-kit" }, Comp: () => h(Page, { surface: "plugins" }) },
+        { slot: "plugins.tab", spec: { name: "plugins.tab", id: "dsh-modpack-kit", order: 1, label: () => "整合包" }, Comp: () => h(Page, { surface: "plugins" }) },
       ],
       sidebar: () => [
-        { slot: "sidebar.panellist", spec: { name: "sidebar.panellist", id: "dsh-modpack-kit", order: 60, label: () => "整合包modpack-kit" }, Comp: Icon },
+        { slot: "sidebar.panellist", spec: { name: "sidebar.panellist", id: "dsh-modpack-kit", order: 60, label: () => "整合包" }, Comp: Icon },
         { slot: "main", spec: { name: "main", key: "dsh-modpack-kit" }, Comp: () => h(Page, { surface: "sidebar" }) },
       ],
     }
@@ -1795,10 +1795,27 @@ window.__ModuleLoader__.load({
         }
       } catch {}
 
+      // 启动那一刻：/status 还没回来、插件页的槽位也还没被声明，插件页那条标签常常错过第一次机会。
+      // 自己拉一次状态拿到开关，并在前十几秒补看几次——晚声明的槽位也能补挂上。
+      const refreshPlacement = async (left) => {
+        try {
+          const data = await api("/status")
+          if (data && data.ok && data.placements) setPlacement(data.placements)
+        } catch (e) {
+          if (left > 0) setTimeout(() => { refreshPlacement(left - 1) }, 700 * (3 - left))
+        }
+      }
+
       ctx.effect(() => {
         const unsubscribe = subscribePlacement(sync)
         sync(placement.value)
-        return () => { unsubscribe(); for (const key of [...mounted.keys()]) unmount(key) }
+        refreshPlacement(3)
+        const timers = [900, 2600, 6000, 11000].map((ms) => setTimeout(() => sync(placement.value), ms))
+        return () => {
+          unsubscribe()
+          for (const timer of timers) clearTimeout(timer)
+          for (const key of [...mounted.keys()]) unmount(key)
+        }
       }, "dsh-modpack-kit: 三处显示位")
     }
 
