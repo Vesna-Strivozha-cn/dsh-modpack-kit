@@ -68,45 +68,8 @@ export default {
       try {
         const market = readMarketGroups(dir)
         const views = groupViews(direct, market)
-        const byName = new Map(direct.map((p) => [p.name, p]))
-        const asPackPlugin = (p) => ({
-          name: p.name,
-          version: p.version,
-          peerDependencies: (p.pkg && p.pkg.peerDependencies) || {},
-          engines: (p.pkg && p.pkg.engines) || {},
-          license: (p.pkg && p.pkg.license) || '',
-          isBundle: p.isBundle === true,
-          hasClient: p.hasClient === true,
-          hasPatch: p.hasPatch === true,
-        })
-        const all = direct.map(asPackPlugin)
-        groups = views.groups.map((group) => {
-          let compat = { level: 'ok', errors: 0, warnings: 0, summary: '' }
-          try {
-            const result = checkCompatibility(group.members.map((name) => asPackPlugin(byName.get(name))), {
-              installed: all,
-              dshVersion: version,
-            })
-            compat = {
-              level: result.counts.error > 0 ? 'error' : result.counts.warn > 0 ? 'warn' : 'ok',
-              errors: result.counts.error,
-              warnings: result.counts.warn,
-              summary: result.summary,
-              // 每条提醒都带着插件名、原因和建议：界面点开兼容标记时直接列出来
-              findings: result.findings
-                .filter((finding) => finding.level !== 'info')
-                .slice(0, 20)
-                .map((finding) => ({
-                  level: finding.level,
-                  plugin: finding.plugin,
-                  code: finding.code,
-                  message: finding.message,
-                  suggestion: finding.suggestion || '',
-                })),
-            }
-          } catch {}
-          return { name: group.name, members: group.members, missing: group.missing, compat }
-        })
+        // 分组只用来整理与批量勾选，不再在组头算兼容：装之前的兼容检查有单独的列表
+        groups = views.groups.map((group) => ({ name: group.name, members: group.members, missing: group.missing }))
         ungrouped = views.ungrouped
         groupSource = market.present ? 'market' : 'none'
       } catch {}

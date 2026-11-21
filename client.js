@@ -784,19 +784,6 @@ window.__ModuleLoader__.load({
 
       const groupInfo = (props.status && Array.isArray(props.status.groups)) ? props.status.groups : []
       const [folded, setFolded] = useState({})
-      // 兼容标记展开状态：只存组名，点开后组下面逐条列出插件、原因与建议
-      const [compatOpen, setCompatOpen] = useState({})
-      const compatRefs = useRef({})
-      const openCompat = (name) => {
-        setFolded((prev) => ({ ...prev, [name]: false }))
-        setCompatOpen((prev) => ({ ...prev, [name]: !prev[name] }))
-        setTimeout(() => {
-          const node = compatRefs.current[name]
-          if (node && typeof node.scrollIntoView === "function") {
-            try { node.scrollIntoView({ block: "nearest", behavior: "smooth" }) } catch {}
-          }
-        }, 30)
-      }
       const sections = useMemo(() => {
         if (groupInfo.length === 0) return []
         const byName = new Map(localRows.map((entry) => [entry.name, entry]))
@@ -806,10 +793,10 @@ window.__ModuleLoader__.load({
           const entries = (group.members || []).map((name) => byName.get(name)).filter(Boolean)
           for (const entry of entries) used.add(entry.name)
           if (entries.length === 0) continue
-          out.push({ key: "group:" + group.name, name: group.name, entries, compat: group.compat || null, missing: group.missing || [] })
+          out.push({ key: "group:" + group.name, name: group.name, entries, missing: group.missing || [] })
         }
         const rest = localRows.filter((entry) => !used.has(entry.name))
-        if (rest.length > 0) out.push({ key: "group:__rest", name: "未分组", entries: rest, compat: null, missing: [] })
+        if (rest.length > 0) out.push({ key: "group:__rest", name: "未分组", entries: rest, missing: [] })
         return out
       }, [localRows, groupInfo])
       const addGroup = (section) => setSelected((prev) => {
@@ -824,10 +811,6 @@ window.__ModuleLoader__.load({
         for (const entry of section.entries) delete next[entry.name]
         return next
       })
-      const compatColor = (level) => (level === "error" ? "#ff6b6b" : level === "warn" ? "#ffb020" : "#2bb673")
-      const compatText = (compat) => (compat.level === "error"
-        ? "兼容：" + compat.errors + " 个问题"
-        : compat.level === "warn" ? "兼容：" + compat.warnings + " 条提醒" : "兼容")
       const renderOne = (entry) => {
               const on = Boolean(selected[entry.name])
               const chosenSource = on ? selected[entry.name].source : (entry.installed === false ? "npm" : "profile")
@@ -881,40 +864,9 @@ window.__ModuleLoader__.load({
           h("div", { style: { flex: "1 1 200px", minWidth: "160px" } },
             h("div", { style: label }, section.name, " ", h("span", { style: hint }, section.entries.length + " 个" + (onCount > 0 ? " · 已选 " + onCount : ""))),
             section.missing.length > 0 ? h("div", { style: hint }, "有 " + section.missing.length + " 个成员已不在本机") : null),
-          section.compat
-            ? h("button", {
-              style: { ...chipBtn, borderColor: compatColor(section.compat.level), color: compatColor(section.compat.level), fontWeight: 600 },
-              onClick: () => openCompat(section.name),
-              title: compatText(section.compat) + "：点开逐条看插件、原因与建议",
-            }, compatText(section.compat) + (compatOpen[section.name] ? " ▴" : " ▾"))
-            : null,
           h("button", { style: btn, onClick: () => addGroup(section), title: "把这一组的插件都加入选择（默认插件预设，可逐个改）" }, "一键加入"),
           onCount > 0 ? h("button", { style: btn, onClick: () => removeGroup(section) }, "清空本组") : null))
           if (!isFolded) for (const entry of section.entries) out.push(renderOne(entry))
-
-          if (compatOpen[section.name] && section.compat) {
-            const details = Array.isArray(section.compat.findings) ? section.compat.findings : []
-            out.push(h("div", {
-              key: section.key + ":compat",
-              ref: (node) => { compatRefs.current[section.name] = node },
-              style: {
-                margin: "2px 0 6px 24px",
-                padding: "6px 9px",
-                borderLeft: "2px solid " + compatColor(section.compat.level),
-                background: "var(--dsw-alias-bg-l1)",
-                borderRadius: "4px",
-              },
-            },
-            h("div", { style: { ...hint, marginBottom: "2px" } }, section.compat.summary || "这一组的兼容检查"),
-            details.length === 0
-              ? h("div", { style: hint }, "没有需要单独说的条目。")
-              : details.map((finding, index) => h("div", {
-                key: index,
-                style: { padding: "3px 0", borderTop: index > 0 ? "0.5px solid var(--dsw-alias-border-l2)" : "none" },
-              },
-                h("div", { style: label }, (finding.level === "error" ? "问题：" : "提醒：") + (finding.plugin || "整合包") + " · " + (finding.message || finding.code || "")),
-                finding.suggestion ? h("div", { style: hint }, finding.suggestion) : null))))
-          }
         }
         return out
       }

@@ -729,7 +729,7 @@ await testAsync('客户端组件在假 React 下能渲染（抓未定义变量�
       { name: 'b-plugin', version: '2.0.0', description: 'B', category: 'tools', hasClient: true, hasPatch: false, isBundle: true },
     ],
     installedTotal: 2,
-    groups: [{ name: 'bili', members: ['a-plugin'], missing: ['gone-plugin'], compat: { level: 'warn', errors: 0, warnings: 2, summary: '可以装，但有 2 个提醒' } }],
+    groups: [{ name: 'bili', members: ['a-plugin'], missing: ['gone-plugin'] }],
     ungrouped: ['b-plugin'],
     groupSource: 'market',
   }
@@ -1536,26 +1536,25 @@ test('市场分组：成员分成本机有与没有的，其余进未分组', ()
   assertEqual(groupViews([{ name: 'a' }], { present: false, order: [], groups: {}, disabled: [] }).ungrouped.join(','), 'a')
 })
 
-test('选插件界面：兼容标记点开能在组下面逐条看提醒，并滚到那里', () => {
+test('选插件界面：分组头不再算兼容，明细代码一并清掉', () => {
   const client = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   const host = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8')
-  // 服务端把每条非 info 的检查结论带下来
-  assert(host.includes('findings: result.findings'), 'status 里应当带兼容检查明细')
-  assert(host.includes("finding.level !== 'info'"), '明细只留问题与提醒，info 不占地方')
-  assert(host.includes('suggestion: finding.suggestion'), '每条要带建议')
-  // 客户端点开标记就展开这一组、列出明细并滚进视野
-  assert(client.includes('const [compatOpen, setCompatOpen] = useState({})'), '要有兼容明细的展开状态')
-  assert(client.includes('const openCompat = (name) =>'), '点标记要有一个入口函数')
-  assert(client.includes('setFolded((prev) => ({ ...prev, [name]: false }))'), '点开时先把这一组展开')
-  assert(client.includes('scrollIntoView({ block: "nearest"'), '点开后要滚到明细那')
-  assert(client.includes('compatRefs.current[section.name] = node'), '明细块要挂 ref 才能滚')
-  assert(client.includes('"问题："') && client.includes('"提醒："'), '明细要分清问题与提醒')
-  assert(client.includes('findings') && client.includes('suggestion'), '明细里要有原因与建议')
+  // 服务端不再给分组算兼容
+  assert(!host.includes('findings: result.findings'), 'index.js 不该再往分组里塞兼容明细')
+  assert(!host.includes('compat = { level:'), 'index.js 不该再算分组兼容结论')
+  assert(host.includes('groups = views.groups.map((group) => ({ name: group.name, members: group.members, missing: group.missing }))'), '分组只留成员与缺失成员')
+  // 客户端不留标记、明细块、滚动逻辑
+  for (const mark of ['compatOpen', 'openCompat', 'compatRefs', 'compatColor', 'compatText', '兼容：']) {
+    assert(!client.includes(mark), 'client.js 不该再留 ' + mark)
+  }
+  // 装之前的兼容列表仍在（那是真正有用的提示）
+  assert(client.includes('function CompatList(props)'), '打包/安装结果里的兼容列表要保留')
+  assert(host.includes('compat: compatFor(inspected.manifest)'), 'inspect 的兼容检查要保留')
 })
 
-test('选插件界面：分组可折叠、可一键加入、带兼容标记', () => {
+test('选插件界面：分组可折叠、可一键加入', () => {
   const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
-  for (const mark of ['const sections = useMemo', 'const renderList = () =>', '一键加入', '清空本组', '兼容：', 'folded[section.name]', 'renderOne(entry)']) {
+  for (const mark of ['const sections = useMemo', 'const renderList = () =>', '一键加入', '清空本组', 'folded[section.name]', 'renderOne(entry)']) {
     assert(source.includes(mark), 'client.js 应包含 ' + mark)
   }
   const host = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8')
