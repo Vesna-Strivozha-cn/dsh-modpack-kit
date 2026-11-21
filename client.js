@@ -272,11 +272,16 @@ window.__ModuleLoader__.load({
     function FoldBox(props) {
       const [open, setOpen] = useState(props.defaultOpen === true)
       const summary = Array.isArray(props.summary) ? props.summary : [props.summary]
+      // 标题行上的操作（比如「清空」）：点它不该顺带把整块展开/收起
+      const actions = Array.isArray(props.actions) ? props.actions.filter(Boolean) : []
       return h("div", { style: { display: "flex", flexDirection: "column", gap: "8px", border: "0.5px solid var(--dsw-alias-border-l2)", borderRadius: "8px", padding: "8px 10px" } },
         h("div", { style: { ...row, cursor: "pointer" }, onClick: () => setOpen((prev) => !prev) },
           h("div", { style: strong }, props.title),
           ...summary.filter(Boolean),
-          h("span", { style: { ...chipBtn, marginLeft: "auto" } }, open ? "收起" : (props.hint || "展开"))),
+          actions.length
+            ? h("span", { style: { display: "flex", gap: "6px", alignItems: "center", marginLeft: "auto" }, onClick: (event) => event.stopPropagation() }, ...actions,
+              h("span", { style: { ...chipBtn, marginLeft: "6px" } }, open ? "收起" : "展开"))
+            : h("span", { style: { ...chipBtn, marginLeft: "auto" } }, open ? "收起" : (props.hint || "展开"))),
         open ? props.children : (props.collapsedNote ? h("div", { style: hint }, props.collapsedNote) : null))
     }
 
@@ -1678,6 +1683,14 @@ window.__ModuleLoader__.load({
           title: "最近记录",
           defaultOpen: false,
           summary: h("span", { style: hint }, history.length ? "共 " + history.length + " 条" : "还没有记录"),
+          actions: history.length
+            ? [h("button", {
+              type: "button",
+              style: chipBtn,
+              title: "清空全部最近记录（只删记录，不动插件与包）",
+              onClick: () => dropHistory(null, true),
+            }, "清空最近记录")]
+            : [],
           hint: "展开（" + history.length + " 条）",
           collapsedNote: history.length ? "打包与安装的历史都记在这里，点开可以逐条删除。" : "",
         },

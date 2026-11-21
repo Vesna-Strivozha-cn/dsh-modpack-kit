@@ -80,7 +80,7 @@ data/<目录名>/**      插件数据快照（小体积文本）
 
 - `options.offline === true` 或 `probeRegistry()` 探不到时，安装只看包里有没有该插件目录：有就装包内副本（`file:`），没有就逐条报「只记版本、没带本体」。
 - 安全检测与兼容性都用 `FoldBox` 包起来（有高危 / 有 error 时默认展开，否则收起）；`FoldBox` 在 `client.js`。
-- 最近记录：`lib/store.mjs` 的 `clearHistory()` / `removeHistory(at)`，对应 `POST /history/clear` 与 `POST /history/remove`（body `{at}`），返回最新 `items`。
+- 最近记录：`FoldBox` 支持 `actions`（标题行上的按钮，点击不会连带展开/收起）；设置页把「清空最近记录」放在标题行，展开后每行右侧还有「删除」。后台是 `lib/store.mjs` 的 `clearHistory()` / `removeHistory(at)`，对应 `POST /history/clear` 与 `POST /history/remove`（body `{at}`），返回最新 `items`。
 
 ## 安装顺序与进度窗
 
