@@ -79,6 +79,9 @@ data/<目录名>/**      插件数据快照（小体积文本）
 
 - `assertAllowedUrl`：只放 https，主机名须在白名单（含子域），白名单版本号 `HOSTS_VERSION` 控制老配置合并。
 - `requestBuffer`：逐跳手动跟随重定向（最多 6 跳），每跳重新校验；超时 `netTimeoutSeconds`（默认 60）、`netRetries`；fetch 全失败且 `curlFallback` 为真时用系统 `curl -i`（不带 `-L`，重定向仍由我们校验），`--max-filesize` 与响应上限双保险。
+- `npmMetadata`：版本清单按「精简（`application/vnd.npm.install-v1+json`）→ 完整 → 单版本（`/名字/版本`）」三层退让；体积上限 `metadataLimit(config)` 读 `maxMetadataBytes`（默认 64 MB，夹 4~512）。超限时错误会说明两条出路：调大上限，或给确定版本号。
+- 传输压缩：fetch 带 `accept-encoding: gzip, deflate, br`，curl 兜底带 `--compressed`；`requestJson` 不再覆盖调用方传入的 `accept`。
+- 轻量包安装：`context.resolveSourceEntries` 把 tarball 解出的条目直接交给 `scanEntries`（内存里扫、不落临时目录），再按 `名字@版本` 交给宿主安装；宿主没提供这条能力时才退回「解到临时目录再扫」。
 
 ## 扩展接口
 

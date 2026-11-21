@@ -132,6 +132,32 @@ test('默认打包上限 512MB，进度窗位置不进配置', () => {
   assertEqual(DEFAULT_CONFIG.maxDownloadBytes, 256 * 1024 * 1024)
   // 进度窗位置由界面拖动并记在浏览器本地，服务端配置里不该再有坐标字段
   assert(DEFAULT_CONFIG.dockX === undefined && DEFAULT_CONFIG.dockY === undefined, '坐标设置应已移除')
+  // 版本清单上限：默认 64 MB，可调到 4~512 MB
+  assertEqual(DEFAULT_CONFIG.maxMetadataBytes, 64, '版本清单上限默认 64 MB')
+  assertEqual(clampConfig({ ...DEFAULT_CONFIG, maxMetadataBytes: 10000 }).maxMetadataBytes, 512, '过大的清单上限应被夹到 512 MB')
+  assertEqual(clampConfig({ ...DEFAULT_CONFIG, maxMetadataBytes: 1 }).maxMetadataBytes, 4, '过小的清单上限应被抬到 4 MB')
+})
+
+// —— 版本清单：billion-context 那种十几 MB 的包 ——
+test('版本清单：超大包能退让到精简清单 / 单版本清单，不再卡在 16 MB', () => {
+  const registry = fs.readFileSync(new URL('../lib/registry.mjs', import.meta.url), 'utf8')
+  const net = fs.readFileSync(new URL('../lib/net.mjs', import.meta.url), 'utf8')
+  assert(registry.includes('application/vnd.npm.install-v1+json'), '应优先请求 npm 的精简清单')
+  assert(registry.includes("label: '单版本清单'"), '应保留单版本清单这条退路')
+  assert(registry.includes('export function metadataLimit'), '上限应可配置（maxMetadataBytes）')
+  assert(registry.includes('maxMetadataBytes'), '错误提示里应告诉用户能调大上限')
+  assert(net.includes("'--compressed'"), 'curl 兜底应走压缩传输')
+  assert(net.includes("'accept-encoding'"), 'fetch 应声明 accept-encoding')
+  assert(net.includes('accept: options.accept ??'), 'requestJson 不能覆盖调用方的 accept')
+})
+
+// —— 轻量包：内存里扫，不落临时目录 ——
+test('轻量包安装：代码取回后先在内存里扫，再按 name@version 装', () => {
+  const install = fs.readFileSync(new URL('../lib/install.mjs', import.meta.url), 'utf8')
+  const index = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  assert(install.includes('context.resolveSourceEntries'), '安装器应优先用内存里的条目')
+  assert(install.includes('全程在内存里，没有落盘'), '提示里应说明没有落盘')
+  assert(index.includes('resolveSourceEntries: async (plugin)'), '宿主侧应提供 resolveSourceEntries')
 })
 
 // —— yaml ——

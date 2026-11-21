@@ -1546,7 +1546,7 @@ window.__ModuleLoader__.load({
                 const bytes = Math.min(4096, Math.max(16, mb)) * 1048576
                 if (bytes !== mb * 1048576) setSaved("已按范围收到 16~4096 MB")
                 setField("maxPackBytes", bytes)
-                patch({ maxPackBytes: bytes, maxDownloadBytes: cfg.maxDownloadBytes, maxFileBytes: cfg.maxFileBytes, netTimeoutSeconds: cfg.netTimeoutSeconds, netRetries: cfg.netRetries, curlFallback: cfg.curlFallback !== false, licenseAllow: cfg.licenseAllow, registries: cfg.registries, allowHosts: cfg.allowHosts })
+                patch({ maxPackBytes: bytes, maxDownloadBytes: cfg.maxDownloadBytes, maxFileBytes: cfg.maxFileBytes, maxMetadataBytes: cfg.maxMetadataBytes, netTimeoutSeconds: cfg.netTimeoutSeconds, netRetries: cfg.netRetries, curlFallback: cfg.curlFallback !== false, licenseAllow: cfg.licenseAllow, registries: cfg.registries, allowHosts: cfg.allowHosts })
               },
             }, "保存数值"),
             h("span", { style: hint }, "默认 256 MB，可填 16~4096"),
@@ -1556,12 +1556,14 @@ window.__ModuleLoader__.load({
             h("input", { style: { ...input, width: "70px" }, type: "number", min: "5", max: "120", value: String(cfg.netTimeoutSeconds || 20), onChange: (e) => setField("netTimeoutSeconds", Number(e.target.value)) }),
             h("span", { style: label }, "重试"),
             h("input", { style: { ...input, width: "56px" }, type: "number", min: "0", max: "5", value: String(cfg.netRetries || 0), onChange: (e) => setField("netRetries", Number(e.target.value)) }),
+            h("span", { style: label }, "版本清单上限（MB）"),
+            h("input", { style: { ...input, width: "70px" }, type: "number", min: "4", max: "512", value: String(cfg.maxMetadataBytes || 64), onChange: (e) => setField("maxMetadataBytes", Number(e.target.value)) }),
             h(Switch, {
               checked: cfg.curlFallback !== false,
               label: "fetch 失败时用系统 curl 兜底",
               onChange: (v) => { setField("curlFallback", v); patch({ curlFallback: v }) },
             })),
-          h("div", { style: hint }, "registry 报 fetch failed / 超时，多半是代理或证书链：调大超时、加一次重试，或让 curl 兜底（走系统证书库）。保存后立即生效。"),
+          h("div", { style: hint }, "registry 报 fetch failed / 超时，多半是代理或证书链：调大超时、加一次重试，或让 curl 兜底（走系统证书库）。提示「下载超过上限」时是版本清单太大（billion-context 这类包的清单十几 MB）：把「版本清单上限」调大，或改用确定的版本号（插件会直接取单版本清单，体积最小）。保存后立即生效。"),
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
           h("div", { style: strong }, "信任清单"),
           h("div", { style: hint }, "允许的许可证（一行一个，例如 MIT）："),

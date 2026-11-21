@@ -306,7 +306,7 @@ export default {
       const body = asJson(await readBody(req), {})
       const name = String(body.name || '')
       try {
-        const { meta, registry } = await npmMetadata(name, config)
+        const { meta, registry } = await npmMetadata(name, config, { full: true })
         const versions = Object.keys((meta && meta.versions) || {})
           .map((v) => ({ version: v, time: (meta.time && meta.time[v]) || '', deprecated: Boolean(meta.versions[v] && meta.versions[v].deprecated) }))
           .reverse()
@@ -939,7 +939,7 @@ export default {
           // 联网且市场可用时，优先按市场版本装（能用就返回 name@version，用不了返回 null 走包内）
           resolveMarket: async (plugin) => {
             try {
-              const { meta } = await npmMetadata(plugin.name, config)
+              const { meta } = await npmMetadata(plugin.name, config, { version: plugin.version || plugin.spec || '' })
               const version = pickVersion(meta, plugin.version || plugin.spec || '') || pickVersion(meta, '')
               if (!version) return null
               appendLog('market ' + plugin.name + '@' + version + ' 优先于包内 ' + (plugin.version || '（未标版本）'))
@@ -948,6 +948,12 @@ export default {
               appendLog('market miss ' + plugin.name + ': ' + String((error && error.message) || error))
               return null
             }
+          },
+          // 轻量包：只把条目取回内存（不落临时目录），扫描与安装都在内存里完成
+          resolveSourceEntries: async (plugin) => {
+            const downloaded = await downloadPackage(plugin.name, plugin.version || plugin.requested || '', config)
+            appendLog('resolve ' + plugin.name + '@' + downloaded.version + ' from ' + downloaded.registry + ' (memory, ' + downloaded.entries.length + ' files)')
+            return downloaded.entries
           },
           resolveSource: async (plugin, packRoot) => {
             const downloaded = await downloadPackage(plugin.name, plugin.version || plugin.requested || '', config)
