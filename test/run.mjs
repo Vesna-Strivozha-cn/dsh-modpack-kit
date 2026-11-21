@@ -13,7 +13,7 @@ import { normalizeManifest } from '../lib/manifest.mjs'
 import { checkCompatibility } from '../lib/compat.mjs'
 import { buildPack, PackRefused, captureConfigs } from '../lib/pack.mjs'
 import { inspectPackBuffer, installPack } from '../lib/install.mjs'
-import { DEFAULT_CONFIG, clampConfig } from '../lib/store.mjs'
+import { DEFAULT_CONFIG, clampConfig, appendHistory, readHistory, clearHistory, removeHistory } from '../lib/store.mjs'
 import { listInstalled } from '../lib/profile.mjs'
 import { assertAllowedUrl, parseCurlResponse, NET_DEFAULTS } from '../lib/net.mjs'
 import { readMarketGroups, groupViews } from '../lib/groups.mjs'
@@ -1668,6 +1668,73 @@ test('选插件界面：分组可折叠、可一键加入', () => {
   assert(host.includes("from './lib/groups.mjs'"), 'index.js 应导入 groups 模块')
   assert(host.includes('groupViews('), 'index.js 应用 groupViews')
   assert(host.includes('groupSource = market.present'), 'index.js 应记录分组来源')
+})
+
+test('最近记录：能按时间删一条，也能整体清空', () => {
+  const home = tmpDir('history-home')
+  const before = process.env.DSH_HOME
+  process.env.DSH_HOME = home
+  try {
+    appendHistory({ kind: 'pack', name: 'a' })
+    appendHistory({ kind: 'install', name: 'b' })
+    const list = readHistory()
+    assertEqual(list.length, 2, '应有两条记录')
+    assertEqual(list[0].name, 'b', '新的记在前面')
+    const newest = list[0].at
+    const left = removeHistory(newest)
+    assertEqual(left.length, 1, '删掉一条后剩一条')
+    assertEqual(left[0].name, 'a', '留下的是另一条')
+    assertEqual(readHistory().length, 1, '删除要落盘')
+    const empty = clearHistory()
+    assertEqual(empty.length, 0, '清空返回空列表')
+    assertEqual(readHistory().length, 0, '清空要落盘')
+  } finally {
+    if (before === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = before
+  }
+})
+
+test('安装导入页：安全检测与兼容性整块可折叠，最近记录可折叠可删', () => {
+  const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  for (const mark of [
+    'function FoldBox(props)',
+    'title: "安全检测"',
+    'title: "兼容性"',
+    'title: "最近记录"',
+    '清空记录',
+    'dropHistory(item, false)',
+    '离线安装（不联网，直接用包里自带的）',
+  ]) {
+    assert(source.includes(mark), 'client.js 应包含 ' + mark)
+  }
+  // 两块报告都改成 FoldBox（不再各画一行标题 + 单独按钮）
+  assert(/h\(FoldBox, \{\s*title: "安全检测"/u.test(source), 'ScanReport 应走 FoldBox')
+  assert(/h\(FoldBox, \{\s*title: "兼容性"/u.test(source), 'CompatList 应走 FoldBox')
+  assert(!source.includes('toggleOpen'), '旧的单独展开按钮应已移除')
+  const host = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  assert(host.includes("'/dsh-modpack-kit/api/history/clear'"), 'index.js 应有清空记录路由')
+  assert(host.includes("'/dsh-modpack-kit/api/history/remove'"), 'index.js 应有删除单条路由')
+  assert(host.includes('probeRegistry: () => probeRegistry(config)'), 'index.js 应把探测交给 installPack')
+})
+
+test('离线安装：探不到 registry 就用包里自带的那份', () => {
+  const inst = fs.readFileSync(new URL('../lib/install.mjs', import.meta.url), 'utf8')
+  for (const mark of [
+    "let offline = options.offline === true",
+    'offline = !(await context.probeRegistry())',
+    'const fromMarketSource = !offline &&',
+    'if (!offline && !marketHit && (options.preferMarket !== false || fromMarketSource)',
+    '当前没网：这个包只记版本、没带本体，装不了',
+  ]) {
+    assert(inst.includes(mark), 'install.mjs 应包含 ' + mark)
+  }
+  const stub = fs.readFileSync(new URL('../assets/install-stub.mjs', import.meta.url), 'utf8')
+  assert(stub.includes("const offline = has('--offline')"), '安装器要认 --offline')
+  assert(stub.includes('--offline         不联网'), '用法里要写清 --offline')
+  assert(stub.includes("const fromMarket = !offline &&"), '离线时不先问市场')
+  const reg = fs.readFileSync(new URL('../lib/registry.mjs', import.meta.url), 'utf8')
+  assert(reg.includes('export async function probeRegistry'), 'registry 应导出 probeRegistry')
+  assert(reg.includes("'/-/ping'"), '探测应打 /-/ping')
 })
 
 for (const [state, name, detail] of results) {

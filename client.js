@@ -267,31 +267,42 @@ window.__ModuleLoader__.load({
 
     const ORIGIN_LABEL = { local: "本机", market: "市场", config: "配置", data: "数据", pack: "整合包" }
 
+    // 一整块可以折叠的区域：标题行常驻，点标题或「展开/收起」都行。
+    // 默认收起，只有真有问题（高危 / 阻断）才默认摊开。
+    function FoldBox(props) {
+      const [open, setOpen] = useState(props.defaultOpen === true)
+      const summary = Array.isArray(props.summary) ? props.summary : [props.summary]
+      return h("div", { style: { display: "flex", flexDirection: "column", gap: "8px", border: "0.5px solid var(--dsw-alias-border-l2)", borderRadius: "8px", padding: "8px 10px" } },
+        h("div", { style: { ...row, cursor: "pointer" }, onClick: () => setOpen((prev) => !prev) },
+          h("div", { style: strong }, props.title),
+          ...summary.filter(Boolean),
+          h("span", { style: { ...chipBtn, marginLeft: "auto" } }, open ? "收起" : (props.hint || "展开"))),
+        open ? props.children : (props.collapsedNote ? h("div", { style: hint }, props.collapsedNote) : null))
+    }
+
     function ScanReport(props) {
       const scan = props.scan
       const counts = (scan && scan.counts) || { high: 0, medium: 0, low: 0 }
       const findings = scan && Array.isArray(scan.findings) ? scan.findings : []
-      const [open, setOpen] = useState(counts.high > 0)
       const [openGroup, setOpenGroup] = useState({})
       if (!scan) return null
       const groups = Array.isArray(props.groups) && props.groups.length
         ? props.groups
         : (findings.length ? [{ key: "all", label: "全部命中", origin: "", counts, findings }] : [])
       const toggleGroup = (key) => setOpenGroup((prev) => ({ ...prev, [key]: !prev[key] }))
-      const toggleOpen = () => setOpen((prev) => !prev)
-      return h("div", { style: { display: "flex", flexDirection: "column", gap: "8px" } },
-        h("div", { style: row },
-          h("div", { style: strong }, "安全检测"),
-          h(Tag, { color: counts.high ? "#ff6b6b" : counts.medium ? "#ffb020" : "#2bb673" },
-            "高 " + counts.high + " · 中 " + counts.medium + " · 低 " + counts.low),
-          h("span", { style: hint }, "扫描 " + (scan.scannedFiles || 0) + " 个文件 / " + bytes(scan.scannedBytes || 0) + (scan.note ? " · " + scan.note : "")),
-          findings.length
-            ? h("button", { style: { ...chipBtn, marginLeft: "auto" }, onClick: toggleOpen },
-              open ? "收起风险列表（" + findings.length + " 条）" : "展开风险列表（" + findings.length + " 条）")
-            : null),
-        findings.length === 0 ? h("div", { style: hint }, "没有命中敏感信息或可疑代码规则。") : null,
-        open && findings.length
-          ? h("div", { style: { display: "flex", flexDirection: "column", gap: "6px" } },
+      return h(FoldBox, {
+        title: "安全检测",
+        defaultOpen: counts.high > 0,
+        summary: [
+          h(Tag, { color: counts.high ? "#ff6b6b" : counts.medium ? "#ffb020" : "#2bb673" }, "高 " + counts.high + " · 中 " + counts.medium + " · 低 " + counts.low),
+          h("span", { style: hint }, "扫了 " + (scan.scannedFiles || 0) + " 个文件"),
+        ],
+        hint: findings.length ? "展开（" + findings.length + " 条）" : "没有命中",
+        collapsedNote: findings.length ? "共 " + findings.length + " 条命中，点标题展开看位置与掩码。" : "",
+      },
+        findings.length === 0
+          ? h("div", { style: hint }, "没有命中敏感信息或可疑代码规则。")
+          : h("div", { style: { display: "flex", flexDirection: "column", gap: "6px" } },
             groups.map((group) => {
               const expanded = openGroup[group.key] === true
               return h("div", { key: group.key, style: { border: "0.5px solid var(--dsw-alias-border-l2)", borderRadius: "6px", overflow: "hidden" } },
@@ -308,8 +319,7 @@ window.__ModuleLoader__.load({
                     group.findings.map((f, i) => h("div", { key: i, style: { ...mono, color: LEVEL_COLOR[f.severity] || "inherit" } },
                       "[" + String(f.severity || "").toUpperCase() + "] " + (f.label || f.rule) + " · " + f.file + (f.line ? ":" + f.line : "") + " · " + (f.masked || ""))))
                   : null)
-            }))
-          : null,
+            })),
         h("div", { style: hint }, props.footNote || "命中内容只在内存里比对，报告只保留类型、位置与掩码，原文不落盘。"))
     }
 
@@ -317,13 +327,18 @@ window.__ModuleLoader__.load({
       const compat = props.compat
       if (!compat) return null
       const findings = compat.findings || []
-      if (findings.length === 0) return h("div", { style: hint }, "兼容性：没有发现问题。")
-      return h("div", { style: { display: "flex", flexDirection: "column", gap: "5px" } },
-        h("div", { style: row }, h("div", { style: strong }, "兼容性"), h("span", { style: hint }, compat.summary || ""),
-          compat.blocking ? h(Tag, { color: "#ff6b6b" }, "有阻断项") : null),
-        findings.map((f, i) => h("div", { key: i, style: { borderLeft: "2px solid " + (LEVEL_COLOR[f.level] || "transparent"), paddingLeft: "8px" } },
-          h("div", { style: { ...label, color: LEVEL_COLOR[f.level] || "inherit" } }, (f.plugin ? f.plugin + "：" : "") + f.message),
-          f.suggestion ? h("div", { style: hint }, "建议：" + f.suggestion) : null)))
+      return h(FoldBox, {
+        title: "兼容性",
+        defaultOpen: compat.blocking === true || findings.some((f) => f.level === "error"),
+        summary: h("span", { style: hint }, findings.length ? (compat.summary || "") : "没有发现问题"),
+        hint: findings.length ? "展开（" + findings.length + " 条）" : "没有发现",
+        collapsedNote: findings.length ? "有 " + findings.length + " 条问题或提醒，点标题展开看建议。" : "",
+      },
+        findings.length === 0
+          ? h("div", { style: hint }, "兼容性：没有发现问题。")
+          : findings.map((f, i) => h("div", { key: i, style: { borderLeft: "2px solid " + (LEVEL_COLOR[f.level] || "transparent"), paddingLeft: "8px" } },
+            h("div", { style: { ...label, color: LEVEL_COLOR[f.level] || "inherit" } }, (f.plugin ? f.plugin + "：" : "") + f.message),
+            f.suggestion ? h("div", { style: hint }, "建议：" + f.suggestion) : null)))
     }
 
     const JOB_KIND_LABEL = { pack: "打包", install: "安装" }
@@ -1269,7 +1284,7 @@ window.__ModuleLoader__.load({
           const allNames = (preview && preview.manifest && preview.manifest.plugins ? preview.manifest.plugins : []).map((p) => p.name)
           const keepNames = allNames.filter((name) => pickedNames[name] !== false)
           const only = keepNames.length === allNames.length || keepNames.length === 0 ? undefined : keepNames
-          const installOptions = { ...options, ...(only ? { only } : {}), configChoice, syncGroups: options.syncGroups !== false }
+          const installOptions = { ...options, ...(only ? { only } : {}), configChoice, syncGroups: options.syncGroups !== false, ...(options.offline === true ? { offline: true } : {}) }
           const data = await api("/install", { ...bodyFor(), ...installOptions, async: true })
           if (!data || data.ok !== true || !data.job) {
             // 老宿主不认 async：退回同步调用
@@ -1422,6 +1437,7 @@ window.__ModuleLoader__.load({
             h(Switch, { checked: options.preferMarket, label: "联网时优先用插件市场的版本（市场查不到就用包内的）", onChange: (v) => setOptions({ ...options, preferMarket: v }) }),
             h(Switch, { checked: options.enableBundles, label: "安装后整体启用（全部登记 bundle，重启后加载）", onChange: (v) => setOptions({ ...options, enableBundles: v }) }),
             h(Switch, { checked: options.syncGroups !== false, label: "安装后同步插件市场分组（包内组名并进同名组）", onChange: (v) => setOptions({ ...options, syncGroups: v }) }),
+            h(Switch, { checked: options.offline === true, label: "离线安装（不联网，直接用包里自带的）", onChange: (v) => setOptions({ ...options, offline: v ? true : undefined }) }),
             h(Switch, { checked: options.force, label: "忽略阻断（我知道自己在干什么）", onChange: (v) => setOptions({ ...options, force: v }) })),
           h("div", { style: row },
             h("button", { style: btnPrimary, disabled: busy !== "" || (source.kind === "url" ? !source.url.trim() : !source.file), onClick: inspect }, busy === "inspect" ? "检测中…" : "检测这个包"),
@@ -1524,7 +1540,25 @@ window.__ModuleLoader__.load({
       const [saved, setSaved] = useState("")
       const [busy, setBusy] = useState(false)
       const [scanNag, fireScanNag] = useNag()
-      const history = (props.status && props.status.history) || []
+      // 记录用本地状态：删一条不用整页重读，删完立刻看到结果
+      const [history, setHistory] = useState((((props.status || {}).history) || []).slice())
+      const [historyMsg, setHistoryMsg] = useState("")
+      const dropHistory = async (item, all) => {
+        setHistoryMsg("")
+        try {
+          const data = all
+            ? await api("/history/clear", {})
+            : await api("/history/remove", { at: item && item.at })
+          if (data && data.ok) {
+            setHistory(Array.isArray(data.items) ? data.items.slice(-12).reverse() : [])
+            setHistoryMsg(all ? "已清空最近记录" : "已删掉这一条")
+          } else {
+            setHistoryMsg((data && data.error) || "没删成")
+          }
+        } catch (e) {
+          setHistoryMsg((e && e.message) || String(e))
+        }
+      }
 
       const patch = async (p) => {
         setBusy(true); setSaved("")
@@ -1640,10 +1674,28 @@ window.__ModuleLoader__.load({
           h("div", { style: mono }, "整合包：" + ((props.status && props.status.paths && props.status.paths.packs) || "?")),
           h("div", { style: mono }, "缓存与暂存：" + ((props.status && props.status.paths && props.status.paths.vendor) || "?")),
           h("div", { style: mono }, "卸载临时文件：删掉 vendor 目录即可，装好的插件不受影响。")),
-        h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "6px" } },
-          h("div", { style: strong }, "最近记录"),
-          history.length === 0 ? h("div", { style: hint }, "还没有记录。") : history.map((item, i) => h("div", { key: i, style: { ...mono, borderTop: "0.5px solid var(--dsw-alias-border-l2)", paddingTop: "4px" } },
-            "[" + (item.kind || "?") + "] " + (item.name || item.pack || "") + " · " + when(item.at) + (item.size ? " · " + bytes(item.size) : "") + (item.ok === false ? " · 失败" : "")))),
+        h(FoldBox, {
+          title: "最近记录",
+          defaultOpen: false,
+          summary: h("span", { style: hint }, history.length ? "共 " + history.length + " 条" : "还没有记录"),
+          hint: "展开（" + history.length + " 条）",
+          collapsedNote: history.length ? "打包与安装的历史都记在这里，点开可以逐条删除。" : "",
+        },
+          history.length === 0
+            ? h("div", { style: hint }, "还没有记录。")
+            : h("div", { style: { display: "flex", flexDirection: "column", gap: "2px" } },
+              history.map((item, i) => h("div", { key: String(item.at || i) + i, style: { ...mono, display: "flex", gap: "8px", alignItems: "baseline", borderTop: "0.5px solid var(--dsw-alias-border-l2)", paddingTop: "4px" } },
+                h("span", { style: { flex: "1 1 auto" } },
+                  "[" + (item.kind || "?") + "] " + (item.name || item.pack || "") + " · " + when(item.at) + (item.size ? " · " + bytes(item.size) : "") + (item.ok === false ? " · 失败" : "")),
+                h("button", {
+                  type: "button",
+                  style: { ...chipBtn, flexShrink: 0 },
+                  title: "删掉这一条（只删记录，不动插件与包）",
+                  onClick: () => dropHistory(item, false),
+                }, "删除"))),
+              h("div", { style: row },
+                h("button", { type: "button", style: btn, onClick: () => dropHistory(null, true) }, "清空记录"),
+                historyMsg ? h("span", { style: hint }, historyMsg) : null))),
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
           h("div", { style: strong }, "显示位置"),
           h("div", { style: hint }, "三处互相独立，一点就生效，不用重启。关掉只是不挂载入口，功能与接口都还在。至少留一处：只剩一个时，那个开关会变灰、点不动。"),

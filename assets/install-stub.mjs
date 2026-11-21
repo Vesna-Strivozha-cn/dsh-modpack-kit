@@ -6,7 +6,7 @@
  *
  * 用法：
  *   node install/install.mjs [--profile desktop] [--dry-run] [--no-bundles] [--replace] [--force]
- *                            [--dsh "<DSH 可执行文件或 cli.js>"]
+ *                            [--offline] [--dsh "<DSH 可执行文件或 cli.js>"]
  *
  * 参数：
  *   --profile <名字>  目标 profile，默认 desktop（也读 DSH_PROFILE）
@@ -14,6 +14,7 @@
  *   --no-bundles      装文件但不登记到 dsh.profile.bundles（重启也不加载）
  *   --replace         本机已装的也换成包内版本（默认跳过已装的）
  *   --force           兼容性检查发现问题也继续（不推荐）
+ *   --offline         不联网：带本体的插件直接用包里那份（只记版本的插件仍需联网）
  *   --dsh <path>      指定 DSH：可执行文件，或 app.asar 里那份 cli.js
  *
  * 目标目录固定是本机的 ~/.dsh：DSH 的命令行只认自己的家目录（实测不认
@@ -57,6 +58,8 @@ const profileDir = path.join(home, 'profiles', profile)
 const dryRun = has('--dry-run')
 const noBundles = has('--no-bundles')
 const force = has('--force')
+// 离线安装：包里带了本体的插件直接装本地那份，不先跑去问市场
+const offline = has('--offline')
 // 默认跳过本机已装的（同名或同插件不同版本都算已有）；--replace 才覆盖
 const replaceExisting = has('--replace') || has('--force-existing')
 
@@ -201,12 +204,13 @@ for (const plugin of manifest.plugins || []) {
   const marketSpec = plugin.name + (plugin.version ? '@' + plugin.version : '')
   // 需求：包里这份当初是从插件市场取的（source npm/market），安装时优先按市场版本装，
   // 取不到（离线 / registry 上没有这个版本）再退回包内自带的那份。
-  const fromMarket = plugin.source === 'npm' || plugin.source === 'market'
+  const fromMarket = !offline && (plugin.source === 'npm' || plugin.source === 'market')
   const attempts = []
   if (fromMarket) attempts.push({ spec: marketSpec, from: 'market' })
   if (fileSpec) attempts.push({ spec: fileSpec, from: 'pack' })
   if (!fromMarket && !fileSpec) attempts.push({ spec: marketSpec, from: 'market' })
   if (attempts.length === 0) attempts.push({ spec: marketSpec, from: 'market' })
+  if (offline && fileSpec) say('离线模式：直接用包里自带的那份（插件市场会显示成本地安装）')
   const runAdd = (spec) => {
     const args = [...cli.args, 'plugin', '--profile', profile, 'add', spec]
     if (dryRun) return { ok: true, output: '', args }

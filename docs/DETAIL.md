@@ -76,6 +76,12 @@ data/<目录名>/**      插件数据快照（小体积文本）
 
 - 入口形态：设置里是一整节；侧边栏是独立页面；插件页里只是一条标签，渲染时不再重复页头，也不自己造滚动区（交给插件页滚），高度由内容决定（`Home` 的 `surface === "plugins"` 分支）。首屏读状态失败会自动退避重试三次并给一个「重试」按钮——宿主刚起来时会话还没就绪，第一次常常拿不到 401 之外的东西。
 
+## 离线安装与折叠
+
+- `options.offline === true` 或 `probeRegistry()` 探不到时，安装只看包里有没有该插件目录：有就装包内副本（`file:`），没有就逐条报「只记版本、没带本体」。
+- 安全检测与兼容性都用 `FoldBox` 包起来（有高危 / 有 error 时默认展开，否则收起）；`FoldBox` 在 `client.js`。
+- 最近记录：`lib/store.mjs` 的 `clearHistory()` / `removeHistory(at)`，对应 `POST /history/clear` 与 `POST /history/remove`（body `{at}`），返回最新 `items`。
+
 ## 安装顺序与进度窗
 
 - 打包与安装共用任务队列：`POST /pack|/install { async: true }` 立即返回 job，`GET /jobs` 轮询；`/jobs/cancel` 终止（包在内存组装，取消不落盘）、`/jobs/ack` 续跑、`/jobs/dismiss` 删记录、`/jobs/clear` 清收尾。

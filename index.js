@@ -7,9 +7,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { randomBytes } from 'node:crypto'
-import { loadConfig, saveConfig, pathsFor, profileName, readHistory, appendHistory, appendLog, ensureDir, slugify, DEFAULT_CONFIG } from './lib/store.mjs'
+import { loadConfig, saveConfig, pathsFor, profileName, readHistory, appendHistory, clearHistory, removeHistory, appendLog, ensureDir, slugify, DEFAULT_CONFIG } from './lib/store.mjs'
 import { listInstalled, dshVersion, readProfilePackage, readBundles } from './lib/profile.mjs'
-import { downloadPackage, npmMetadata, pickVersion, fetchLimited, relativeTime } from './lib/registry.mjs'
+import { downloadPackage, npmMetadata, pickVersion, fetchLimited, relativeTime, probeRegistry } from './lib/registry.mjs'
 import { buildPack, PackRefused } from './lib/pack.mjs'
 import { inspectPackBuffer, installPack, readPackFromUrl, InstallRefused } from './lib/install.mjs'
 import { checkCompatibility } from './lib/compat.mjs'
@@ -604,9 +604,9 @@ export default {
 
     // 三种打包策略能不能选：客户端据此把卡片画成可点/灰掉，灰掉时给出原因。
     route('/dsh-modpack-kit/api/pack/plan', async (req, res) => {
-      needPost(req, res)
-      return fenced(res, async () => {
-        const body = await readJsonBody(req)
+      if (!needPost(req, res)) return
+      {
+        const body = asJson(await readBody(req), {}) || {}
         const selection = Array.isArray(body.selection) ? body.selection : []
         if (selection.length === 0) return json(res, 400, { ok: false, error: '还没选插件' })
         const installed = installedOrEmpty()
@@ -654,7 +654,7 @@ export default {
           strategies[0].note += '（其中 ' + names(noCode) + ' 本机没有代码，打包时要联网取一次）'
         }
         return json(res, 200, { ok: true, strategies, plugins: rows })
-      })
+      }
     })
 
     route('/dsh-modpack-kit/api/pack', async (req, res) => {
@@ -958,6 +958,8 @@ export default {
       only: Array.isArray(body.only) && body.only.length > 0 ? body.only.map(String) : null,
       // 联网且有插件市场时优先按市场版本装（默认开；请求里能逐次关掉）
       preferMarket: typeof body.preferMarket === 'boolean' ? body.preferMarket : config.preferMarketOnInstall !== false,
+      // 离线安装：true = 不问 registry 直接用包里自带的；不给 = 由 installPack 先探一下网络决定
+      offline: typeof body.offline === 'boolean' ? body.offline : undefined,
     })
 
     const runInstall = async (inspected, body, job) => {
@@ -989,6 +991,8 @@ export default {
         options: { preferMarketOnInstall: options.preferMarketOnInstall !== false || config.preferMarketOnInstall !== false, ...options, onProgress: (event) => push(event.pct, event.note) },
         context: {
           profileDir: profileDir(),
+          // 离线判断：registry 探不通就直接用包里自带的，别让每个插件都等超时
+          probeRegistry: () => probeRegistry(config),
           // 优先用宿主自带的插件管理器（pnpm、激活、重启判定都由它负责）；
           // 服务不在或调用抛错时 installPack 会自动退回 dsh 命令行。
           installBundle: (() => {
@@ -1127,6 +1131,21 @@ export default {
     route('/dsh-modpack-kit/api/history', async (req, res) => {
       if (req.method !== 'GET') { json(res, 405, { ok: false }); return }
       json(res, 200, { ok: true, items: readHistory().slice().reverse() })
+    })
+
+    // 清空最近记录（文件留着，只是写空）
+    route('/dsh-modpack-kit/api/history/clear', async (req, res) => {
+      if (!needPost(req, res)) return
+      json(res, 200, { ok: true, items: clearHistory() })
+    })
+
+    // 删掉某一条：按 at 时间戳匹配
+    route('/dsh-modpack-kit/api/history/remove', async (req, res) => {
+      if (!needPost(req, res)) return
+      const body = asJson(await readBody(req), {}) || {}
+      const items = removeHistory(body.at)
+      appendLog('history remove ' + String((body && body.at) || '') + ' left=' + items.length)
+      json(res, 200, { ok: true, items })
     })
 
     route('/dsh-modpack-kit/api/plugin-summary', async (req, res) => {

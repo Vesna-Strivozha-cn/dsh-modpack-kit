@@ -101,6 +101,42 @@ await step('install 演练不落地', async () => {
   assert.equal(r.data.actions[0].ok, true)
 })
 
+await step('最近记录：删一条 / 清空 都落盘，测完还原', async () => {
+  const file = path.join(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'dsh-modpack', 'history.json')
+  const backup = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null
+  try {
+    const list = await call('/dsh-modpack-kit/api/history')
+    assert.equal(list.data.ok, true)
+    const first = list.data.items[0]
+    assert.ok(first && first.at, '打包成功后应至少有一条记录，且带 at')
+
+    const removed = await call('/dsh-modpack-kit/api/history/remove', { method: 'POST', body: { at: first.at } })
+    assert.equal(removed.data.ok, true)
+    assert.ok(!removed.data.items.some((item) => item.at === first.at), '删掉的那条不该再出现')
+
+    const cleared = await call('/dsh-modpack-kit/api/history/clear', { method: 'POST', body: {} })
+    assert.equal(cleared.data.ok, true)
+    assert.equal(cleared.data.items.length, 0, '清空后应为空')
+    assert.equal(fs.readFileSync(file, 'utf8').trim(), '[]', '清空要写进文件')
+  } finally {
+    if (backup === null) { try { fs.rmSync(file, { force: true }) } catch { /* 清不掉就别管 */ } }
+    else fs.writeFileSync(file, backup)
+  }
+})
+
+await step('离线安装：请求给了 offline，轻量包缺本体时明确拒绝', async () => {
+  const r = await call('/dsh-modpack-kit/api/install', {
+    method: 'POST',
+    body: { token: globalThis.__token, dryRun: true, offline: true, deferExisting: false, keepLocal: false },
+  })
+  assert.equal(r.code, 200)
+  assert.equal(r.data.ok, false, '没带本体的轻量包离线装不了')
+  const failed = (r.data.actions || []).find((a) => a.plugin === 'dsh-bili-account-bridge')
+  assert.ok(failed, '应有一条针对该插件的结果')
+  assert.equal(failed.ok, false)
+  assert.ok(/当前没网/u.test(failed.message), '应说明没网、需要联网或换完整包，实际：' + failed.message)
+})
+
 await step('安装走任务队列：立即返回任务，/jobs 能轮询到完成', async () => {
   const started = await call('/dsh-modpack-kit/api/install', {
     method: 'POST',
