@@ -1,7 +1,7 @@
 {
   "name": "dsh-modpack-kit",
   "version": "0.2.0",
-  "description": "PCL/HMCL-style modpacks for DeepSeek Harness: bundle plugins with their config and data into one .dshpack and install in one pass. Three strategies: full (installs offline), download-only (smallest), hybrid (per-plugin — only what cannot be fetched by version ships inside). Packing scans in memory and redacts suspected credentials (never written to disk; high-risk findings pause until confirmed); installing re-checks sha256, dependencies and licences. Categories, search, paging and groups share the plugin market, and installed plugins register as market versions. The plugin market is recommended, not required.",
+  "description": "PCL/HMCL-style modpack tool for DeepSeek Harness: bundle plugins with their config and data into one .dshpack, install them in one pass, works offline, no need to install each plugin by hand when moving to another machine. Also searched as: modpack, plugin bundle, batch install, one-click install, offline install, migrate plugins, back up plugin config, share a plugin combo. Three strategies: full (installs offline), download-only (smallest), hybrid (per-plugin — only what cannot be fetched by version ships inside). Packing scans in memory and redacts suspected credentials (never written to disk; high-risk findings pause until confirmed); installing re-checks sha256, dependencies and licences. Categories, search, paging and groups share the plugin market. The plugin market is recommended, not required.",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -30,7 +30,14 @@
     "pack",
     "installer",
     "plugin-manager",
-    "security-scan"
+    "security-scan",
+    "dsh",
+    "deepseek-harness",
+    "dshpack",
+    "plugin-bundle",
+    "one-click-install",
+    "offline-install",
+    "migrate-plugins"
   ],
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Vesna-Strivozha-cn",
