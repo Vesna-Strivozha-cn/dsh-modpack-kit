@@ -10,6 +10,20 @@ import plugin from '../index.js'
 
 import { mountFakeHost } from '../dev/tools/fake-host.mjs'
 
+// 烟测会真的打几个包、写 history.json 和 modpack.log。
+// 这些是「使用者自己的记录」，测试不能往里灌：没显式给 DSH_HOME 时，
+// 自己开一个临时目录当状态目录，跑完删掉。
+let tempHome = null
+if (!process.env.DSH_HOME) {
+  tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-modpack-smoke-'))
+  process.env.DSH_HOME = tempHome
+  process.on('exit', () => {
+    try {
+      fs.rmSync(tempHome, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
+    } catch {}
+  })
+}
+
 // 假 ctx 里打包是同步 CPU 活，会在微任务里一口气跑完；延后 1200ms 开跑，
 // 才有窗口验证「跑着的任务不能被删 / 不能被清空」。
 const { call, callRaw } = mountFakeHost(plugin, { jobDelay: 1200 })
