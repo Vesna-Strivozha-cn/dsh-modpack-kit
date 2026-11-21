@@ -1166,6 +1166,88 @@ await testAsync('安装：市场来源的包不必再问 registry，也不会退
   assert(!run.lines.some((line) => line.includes('显示成本地安装')), '按市场装成时不该出现「本地」告警')
 })
 
+await testAsync('安装：按组打包的插件装到有插件市场的机器上会并进同名分组', async () => {
+  const targetHome = tmpDir('group-merge')
+  const targetProfile = path.join(targetHome, 'profiles', 'desktop')
+  fs.mkdirSync(targetProfile, { recursive: true })
+  fs.writeFileSync(path.join(targetProfile, 'package.json'), JSON.stringify({
+    name: 'desktop', private: true, dependencies: {}, dsh: { profile: { bundles: [] } },
+  }, null, 2))
+  fs.writeFileSync(path.join(targetProfile, 'cordis.patch.yml'), '[]\n')
+  // 目标机器已经装了插件市场，并且自己有一组别人的分组
+  const marketDir = path.join(targetProfile, '.dsh-market')
+  fs.mkdirSync(marketDir, { recursive: true })
+  const stateFile = path.join(marketDir, 'state.json')
+  fs.writeFileSync(stateFile, JSON.stringify({
+    version: 3,
+    groups: { bili: ['keep-me'], work: ['other-plugin'] },
+    groupOrder: ['bili', 'work'],
+    disabled: ['keep-me'],
+  }, null, 2))
+
+  const manifest = normalizeManifest({
+    schema: 1,
+    kind: 'dsh-modpack',
+    format: 'full',
+    createdAt: new Date().toISOString(),
+    name: '分组包',
+    plugins: [
+      { name: 'demo-plugin', version: '2.3.4', source: 'npm', dirName: 'demo-plugin', group: 'bili' },
+      { name: 'solo-plugin', version: '1.0.0', source: 'npm', dirName: 'solo-plugin' },
+    ],
+  })
+  const run = await installPack({
+    manifest,
+    entries: [],
+    config: baseConfig,
+    options: { applyConfig: false, keepLocal: false, enableBundles: false, deferExisting: false },
+    context: {
+      profileDir: targetProfile,
+      installBundle: async (spec) => ({ changed: true, stage: 'install', application: 'applied', target: spec }),
+    },
+  })
+  assert(run.ok, '应当装成功：' + JSON.stringify(run.actions))
+  const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'))
+  assertEqual(state.groups.bili.join(','), 'keep-me,demo-plugin', '同名分组应当合并成员，实际：' + JSON.stringify(state.groups))
+  assertEqual(state.groups.work.join(','), 'other-plugin', '别的分组不能被动')
+  assertEqual(state.groupOrder.join(','), 'bili,work', '分组顺序保持，新组才追加')
+  assertEqual(state.disabled.join(','), 'keep-me', '停用名单要原样保留')
+  assertEqual(state.version, 3, '状态文件里其它键要原样保留')
+  assert(!state.groups.bili.includes('solo-plugin'), '没归组的不该被塞进分组')
+  assert(run.lines.some((line) => line.includes('并入插件市场')), '结果里要说明分组已并入')
+  assert(run.actions.some((a) => a.action === 'group' && a.ok), '应当有一条分组动作')
+})
+
+await testAsync('安装：目标 profile 没装插件市场时不写分组，但要说明', async () => {
+  const targetHome = tmpDir('group-no-market')
+  const targetProfile = path.join(targetHome, 'profiles', 'desktop')
+  fs.mkdirSync(targetProfile, { recursive: true })
+  fs.writeFileSync(path.join(targetProfile, 'package.json'), JSON.stringify({
+    name: 'desktop', private: true, dependencies: {}, dsh: { profile: { bundles: [] } },
+  }, null, 2))
+  fs.writeFileSync(path.join(targetProfile, 'cordis.patch.yml'), '[]\n')
+  const manifest = normalizeManifest({
+    schema: 1,
+    kind: 'dsh-modpack',
+    format: 'full',
+    createdAt: new Date().toISOString(),
+    name: '无市场分组包',
+    plugins: [{ name: 'demo-plugin', version: '2.3.4', source: 'npm', dirName: 'demo-plugin', group: 'bili' }],
+  })
+  const run = await installPack({
+    manifest,
+    entries: [],
+    config: baseConfig,
+    options: { applyConfig: false, keepLocal: false, enableBundles: false, deferExisting: false },
+    context: {
+      profileDir: targetProfile,
+      installBundle: async (spec) => ({ changed: true, stage: 'install', application: 'applied', target: spec }),
+    },
+  })
+  assert(!fs.existsSync(path.join(targetProfile, '.dsh-market')), '没装市场就不该凭空建市场目录')
+  assert(run.lines.some((line) => line.includes('没装插件市场')), '要说明为什么没写分组：' + JSON.stringify(run.lines))
+})
+
 await testAsync('安装：市场来源退回包内副本时会明确提示「市场会显示成本地」', async () => {
   const targetHome = tmpDir('market-fallback')
   const targetProfile = path.join(targetHome, 'profiles', 'desktop')

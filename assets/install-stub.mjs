@@ -322,6 +322,58 @@ if (manifest.options && manifest.options.includeConfig) {
   if (data.written.length > 0) say('数据快照已写回 ' + data.written.length + ' 个文件：' + data.written.slice(0, 6).join('、') + (data.written.length > 6 ? ' 等' : ''))
   if (data.kept.length > 0) say('有 ' + data.kept.length + ' 个数据文件本机已有，未覆盖（要覆盖就加 --replace 重跑）')
 }
+const groupResult = restoreGroups()
+if (groupResult.applied) say('已按包内分组并入插件市场：' + groupResult.applied)
+if (groupResult.skipped) say('这个包按分组打包（' + groupResult.skipped + '），但目标 profile 没装插件市场，分组没有写入')
+/** 分组：把包里记的组名并进目标 profile 的 .dsh-market/state.json（只加成员，不动别的）。 */
+function restoreGroups() {
+  const adds = new Map()
+  for (const plugin of manifest.plugins || []) {
+    if (!plugin.group || plugin.transitiveOf) continue
+    if (!adds.has(plugin.group)) adds.set(plugin.group, [])
+    adds.get(plugin.group).push(plugin.name)
+  }
+  if (adds.size === 0) return { applied: '', skipped: '' }
+  const text = [...adds].map(([name, members]) => name + '（' + members.length + ' 个）').join('、')
+  const marketDir = path.join(profileDir, '.dsh-market')
+  if (!fs.existsSync(marketDir)) return { applied: '', skipped: text }
+  const stateFile = path.join(marketDir, 'state.json')
+  let raw = {}
+  try {
+    raw = JSON.parse(fs.readFileSync(stateFile, 'utf8'))
+  } catch {
+    raw = {}
+  }
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) raw = {}
+  const groups = raw.groups && typeof raw.groups === 'object' && !Array.isArray(raw.groups) ? { ...raw.groups } : {}
+  const order = Array.isArray(raw.groupOrder) ? raw.groupOrder.filter((x) => typeof x === 'string') : []
+  const parts = []
+  for (const [name, members] of adds) {
+    const current = Array.isArray(groups[name]) ? groups[name].filter((x) => typeof x === 'string') : []
+    let added = 0
+    for (const member of members) {
+      if (current.includes(member)) continue
+      current.push(member)
+      added += 1
+    }
+    if (added === 0 && groups[name] !== undefined) continue
+    groups[name] = current
+    if (!order.includes(name)) order.push(name)
+    parts.push(name + '（+' + added + '）')
+  }
+  if (parts.length === 0) return { applied: '', skipped: '' }
+  raw.groups = groups
+  raw.groupOrder = order
+  if (!dryRun) {
+    try {
+      fs.writeFileSync(stateFile, JSON.stringify(raw, null, 2) + '\n', 'utf8')
+    } catch {
+      return { applied: '', skipped: '' }
+    }
+  }
+  return { applied: parts.join('、'), skipped: '' }
+}
+
 /** 数据快照：把包里 data/<目录>/ 下的文本文件放回 ~/.dsh/<目录>/，默认不覆盖本机已有文件。 */
 function restoreData() {
   const dir = path.join(root, 'data')

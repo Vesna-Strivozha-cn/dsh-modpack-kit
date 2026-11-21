@@ -776,7 +776,7 @@ window.__ModuleLoader__.load({
       const addAllLocal = () => setSelected((prev) => {
         const next = { ...prev }
         for (const entry of localRows) {
-          if (!next[entry.name]) next[entry.name] = { name: entry.name, source: entrySource(entry), spec: entrySpec(entry), choice: "preset" }
+          if (!next[entry.name]) next[entry.name] = { name: entry.name, source: entrySource(entry), spec: entrySpec(entry), choice: "preset", group: section.name }
         }
         return next
       })

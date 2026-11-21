@@ -477,6 +477,7 @@ export default {
               spec: item.spec ? String(item.spec) : (source === 'npm' ? String(item.version || '') : ''),
               mode: choice === 'custom' ? 'local' : 'base',
               configMode: choice,
+              group: item.group ? String(item.group).slice(0, 40) : '',
               download: (spec) => downloadPackage(name, spec || item.spec || String(item.version || ''), config),
             }
           }),
