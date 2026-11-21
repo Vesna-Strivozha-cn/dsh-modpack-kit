@@ -92,6 +92,17 @@ export default {
               errors: result.counts.error,
               warnings: result.counts.warn,
               summary: result.summary,
+              // 每条提醒都带着插件名、原因和建议：界面点开兼容标记时直接列出来
+              findings: result.findings
+                .filter((finding) => finding.level !== 'info')
+                .slice(0, 20)
+                .map((finding) => ({
+                  level: finding.level,
+                  plugin: finding.plugin,
+                  code: finding.code,
+                  message: finding.message,
+                  suggestion: finding.suggestion || '',
+                })),
             }
           } catch {}
           return { name: group.name, members: group.members, missing: group.missing, compat }

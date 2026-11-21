@@ -1536,6 +1536,23 @@ test('市场分组：成员分成本机有与没有的，其余进未分组', ()
   assertEqual(groupViews([{ name: 'a' }], { present: false, order: [], groups: {}, disabled: [] }).ungrouped.join(','), 'a')
 })
 
+test('选插件界面：兼容标记点开能在组下面逐条看提醒，并滚到那里', () => {
+  const client = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  const host = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  // 服务端把每条非 info 的检查结论带下来
+  assert(host.includes('findings: result.findings'), 'status 里应当带兼容检查明细')
+  assert(host.includes("finding.level !== 'info'"), '明细只留问题与提醒，info 不占地方')
+  assert(host.includes('suggestion: finding.suggestion'), '每条要带建议')
+  // 客户端点开标记就展开这一组、列出明细并滚进视野
+  assert(client.includes('const [compatOpen, setCompatOpen] = useState({})'), '要有兼容明细的展开状态')
+  assert(client.includes('const openCompat = (name) =>'), '点标记要有一个入口函数')
+  assert(client.includes('setFolded((prev) => ({ ...prev, [name]: false }))'), '点开时先把这一组展开')
+  assert(client.includes('scrollIntoView({ block: "nearest"'), '点开后要滚到明细那')
+  assert(client.includes('compatRefs.current[section.name] = node'), '明细块要挂 ref 才能滚')
+  assert(client.includes('"问题："') && client.includes('"提醒："'), '明细要分清问题与提醒')
+  assert(client.includes('findings') && client.includes('suggestion'), '明细里要有原因与建议')
+})
+
 test('选插件界面：分组可折叠、可一键加入、带兼容标记', () => {
   const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   for (const mark of ['const sections = useMemo', 'const renderList = () =>', '一键加入', '清空本组', '兼容：', 'folded[section.name]', 'renderOne(entry)']) {
