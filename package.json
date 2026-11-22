@@ -1,6 +1,6 @@
 {
   "name": "dsh-modpack-kit",
-  "version": "0.2.0-1",
+  "version": "0.2.1",
   "description": "谁说dsh不能整整合包呢？（你说这几个插件整一块不牛逼坏了） 把多个 DeepSeek Harness 插件连同配置与数据打成一个 .dshpack，一键安装、离线可装；三种策略、分组同源插件市场。npm：https://www.npmjs.com/package/dsh-modpack-kit",
   "type": "module",
   "main": "index.js",
@@ -37,7 +37,8 @@
     "plugin-bundle",
     "one-click-install",
     "offline-install",
-    "migrate-plugins"
+    "migrate-plugins",
+    "ai-search"
   ],
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Vesna-Strivozha-cn",

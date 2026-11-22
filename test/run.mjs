@@ -148,7 +148,7 @@ test('定位语：默认配置里带那句备注，页面标题与市场描述�
   assert(yml.includes(tagline), '市场条目描述开头带同一句')
   assert(yml.includes('npmjs.com/package/dsh-modpack-kit'), '市场条目介绍里带 npm 链接')
   const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-  assertEqual(pkg.version, '0.2.0-1', '版本 0.2.0-1')
+  assert(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(pkg.version), '版本号要像样子：'+pkg.version)
 })
 
 test('更新日志不收录预发布版本（-1 这类不写进改动汇总）', () => {
@@ -1782,6 +1782,21 @@ test('请求体解析只有一处：路由统一用 readJsonBody，别再手写 
   assert(!/\basJson\(/.test(text), 'index.js 里不该再手写 asJson(…)：容易漏 await 或忘给默认值')
   const http = fs.readFileSync(new URL('../lib/http.mjs', import.meta.url), 'utf8')
   assert(http.includes('export const readJsonBody = async (req, fallback = {}, limit = MAX_JSON_BODY) =>'), '助手要能带体积上限（drop 路由用 256 MB）')
+})
+
+test('AI 搜索：借用插件市场新接口，旧版市场自动退回关键词', () => {
+  const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert(cli.includes('"/dsh-market/ai-search"'), '要走插件市场的 AI 搜索接口，而不是自己再实现一遍模型调用')
+  assert(cli.includes('function marketAiSearchReady()'), '先探一次路由，旧版市场没有这条就不要显示开关')
+  assert(cli.includes('function readAiSearchPref()') && cli.includes('dsh-modpack-kit:ai-search'), '开关状态存本地，刷新后还在')
+  assert(cli.includes('credentials: "same-origin"'), '同源请求要带上鉴权 cookie，否则宿主会 401')
+  assert(cli.includes('AI 搜索：开') && cli.includes('AI 来找'), '界面上要有开关与触发按钮')
+  assert(cli.includes('当前装的插件市场没有 AI 搜索'), '旧版/没装时要说明为什么没有开关')
+  assert(cli.includes('AI 搜索的 token 消耗记在插件市场那边'), '要写明 token 扣在市场那边，不是本插件')
+  assert(cli.includes('e.key === "Enter"'), '回车触发 AI 搜索')
+  const idx = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  assert(idx.includes('const searchCache = new Map()'), '关键词搜索要有短缓存，翻页/切分类不必重算')
+  assert(idx.includes('searchCache.get(cacheKey)') && idx.includes('searchCache.size > 40'), '缓存要有命中与容量上限')
 })
 
 for (const [state, name, detail] of results) {

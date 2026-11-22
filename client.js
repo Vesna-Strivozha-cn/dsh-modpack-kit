@@ -92,6 +92,41 @@ window.__ModuleLoader__.load({
       return () => packStore.subs.delete(fn)
     }
 
+    // 插件市场的 AI 搜索：市场新版本用 POST /dsh-market/ai-search，让「你在 DSH 里配的模型」从目录里挑插件。
+    // 我们不重复实现模型调用：旧版市场（或没装）没有这条路由，界面自动退回纯关键词搜索。
+    const AI_SEARCH_KEY = "dsh-modpack-kit:ai-search"
+    function readAiSearchPref() {
+      try { return window.localStorage.getItem(AI_SEARCH_KEY) === "1" } catch (e) { return false }
+    }
+    function writeAiSearchPref(on) {
+      try { window.localStorage.setItem(AI_SEARCH_KEY, on ? "1" : "0") } catch (e) { /* 存不了不影响本场 */ }
+    }
+    let aiProbe = null
+    function marketAiSearchReady() {
+      if (!aiProbe) {
+        aiProbe = fetch("/dsh-market/ai-search", { method: "GET", credentials: "same-origin" })
+          .then((res) => res.status === 405 || res.status === 200)
+          .catch(() => false)
+      }
+      return aiProbe
+    }
+    async function callMarketAiSearch(query) {
+      const res = await fetch("/dsh-market/ai-search", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query }),
+      })
+      let body = null
+      try { body = await res.json() } catch (e) { body = null }
+      if (!res.ok || !body || !body.result) {
+        const error = new Error((body && body.error) || ("AI 搜索没有返回结果（HTTP " + res.status + "）"))
+        error.code = (body && body.code) || (res.status === 409 ? "no-model" : "model-failed")
+        throw error
+      }
+      return body.result
+    }
+
     // 已导入的整合包：可以同时留好几份，各自显示名字 / 作者 / 描述，切页签也还在
     const importStore = { value: [], subs: new Set() }
     function readImports() {
@@ -636,6 +671,10 @@ window.__ModuleLoader__.load({
       const [category, setCategory] = useState("all")
       const [search, setSearch] = useState({ items: [], total: 0, page: 0, hasMore: false, error: "" })
       const [searching, setSearching] = useState(false)
+      const [aiOn, setAiOn] = useState(readAiSearchPref)
+      const [aiReady, setAiReady] = useState(null)
+      const [aiBusy, setAiBusy] = useState(false)
+      const [aiRun, setAiRun] = useState(null)
       const [syncing, setSyncing] = useState("")
       const [options, setOptions] = useState(() => (draft.options ? { ...draft.options } : {
         strategy: "full",
@@ -742,6 +781,42 @@ window.__ModuleLoader__.load({
         }, 220)
         return () => { alive = false; clearTimeout(timer) }
       }, [query, category, active, pageSize])
+
+      // AI 搜索：开着才探一次路由（旧版插件市场没有这条，就不显示开关）
+      useEffect(() => {
+        let alive = true
+        marketAiSearchReady().then((ok) => { if (alive) setAiReady(ok) })
+        return () => { alive = false }
+      }, [])
+
+      // 只在按回车或点「AI 来找」时调用：花的是主人自己的 token
+      const runAi = async () => {
+        const text = query.trim()
+        if (!text || aiBusy) return
+        setAiBusy(true)
+        setAiRun(null)
+        try {
+          const result = await callMarketAiSearch(text)
+          const picks = (Array.isArray(result.picks) ? result.picks : []).filter((item) => item && item.name)
+          setAiRun({ query: text, intro: result.intro || "", model: result.model || "", picks, error: "", code: "" })
+          if (picks.length) {
+            try {
+              const look = await api("/catalog/lookup", { names: picks.map((item) => item.name) })
+              if (look && look.ok) setMarketInfo((prev) => ({ ...prev, ...(look.items || {}) }))
+            } catch (e) { /* 版本信息补不上不影响结果 */ }
+          }
+        } catch (e) {
+          setAiRun({ query: text, intro: "", model: "", picks: [], error: e.message || String(e), code: e.code || "" })
+        } finally {
+          setAiBusy(false)
+        }
+      }
+      const toggleAi = () => {
+        const next = !aiOn
+        setAiOn(next)
+        writeAiSearchPref(next)
+        if (!next) setAiRun(null)
+      }
 
       const loadMore = async () => {
         if (searching || !search.hasMore) return
@@ -1093,7 +1168,16 @@ window.__ModuleLoader__.load({
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "10px" } },
           h("div", { style: row },
             h("div", { style: strong }, "选择插件"),
-            h("input", { style: { ...input, flex: "1 1 200px" }, placeholder: "搜索插件名 / 描述（在插件市场目录里搜）", value: query, onChange: (e) => setQuery(e.target.value) }),
+            h("input", {
+              style: { ...input, flex: "1 1 200px" },
+              placeholder: aiOn && aiReady ? "用一句话描述你要的插件（回车让 AI 在目录里挑）" : "搜索插件名 / 描述（在插件市场目录里搜）",
+              value: query,
+              onChange: (e) => setQuery(e.target.value),
+              onKeyDown: (e) => { if (e.key === "Enter" && aiOn && aiReady) { e.preventDefault(); runAi() } },
+            }),
+            aiReady === true ? h("button", { style: aiOn ? chipOn : btn, onClick: toggleAi, title: "只调用插件市场提供的 AI 搜索接口：真正花的是你在「设置 → 模型」里配的那把 Key——请求由市场发出、扣你的额度，本插件既不读也不存 Key，只发这一次请求" }, aiOn ? "AI 搜索：开" : "AI 搜索：关") : null,
+            aiOn && aiReady ? h("button", { style: btn, disabled: aiBusy || query.trim() === "", onClick: runAi }, aiBusy ? "AI 正在挑…" : "AI 来找") : null,
+            aiOn && aiReady ? h("div", { style: { ...hint, width: "100%" } }, "AI 搜索的 token 消耗记在插件市场那边：它拿你在「设置 → 模型」里配的模型去问，本插件只把问题转过去、把结果拿回来，不读也不存你的 Key。") : null,
             active ? h("button", { style: btn, onClick: () => { setQuery(""); setCategory("all") } }, "回到已装") : null,
             h("button", { style: btn, onClick: addAllLocal, title: "把本机已装的全部插件加入选择（默认插件预设，可逐个改成自定义配置）" }, "全部加入"),
             h("button", { style: btn, disabled: picked.length === 0, onClick: clearSelected, title: "清空当前选择" }, "清除选择"),
@@ -1113,6 +1197,26 @@ window.__ModuleLoader__.load({
               onClick: () => setCategory(c.id),
               title: "只看「" + c.label + "」" + (c.count ? "，市场内 " + c.count + " 个" : ""),
             }, c.label + (c.count ? " " + c.count : "")))) : null,
+          aiReady === false ? h("div", { style: hint }, "当前装的插件市场没有 AI 搜索（旧版本或未安装）：这里只做关键词搜索。装新版 dshmarket 后开关会自动出现。") : null,
+          aiRun ? h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "6px", borderColor: aiRun.error ? "#ff6b6b" : "var(--dsw-alias-border-l2)" } },
+            h("div", { style: row },
+              h("div", { style: strong }, aiRun.error ? "AI 搜索没成功" : "AI 挑的插件"),
+              h("span", { style: hint }, aiRun.model ? "模型：" + aiRun.model : ""),
+              h("button", { style: btn, onClick: () => setAiRun(null) }, "收起")),
+            aiRun.error ? h("div", { style: { ...hint, color: "#ff6b6b" } }, aiRun.error + (aiRun.code === "no-model" ? "　先在「设置 → 模型」里配一个模型再试。" : "")) : null,
+            aiRun.intro ? h("div", { style: hint }, aiRun.intro) : null,
+            aiRun.picks.length === 0 && !aiRun.error ? h("div", { style: hint }, "这次没挑出合适的插件，换个说法再试。") : null,
+            aiRun.picks.map((item) => {
+              const meta = marketInfo[item.name] || {}
+              const on = Boolean(selected[item.name])
+              const entry = { name: item.name, installed: false, hasMarket: true, marketVersion: meta.version || "", version: meta.version || "" }
+              return h("div", { key: item.name, style: { display: "flex", gap: "8px", alignItems: "flex-start", padding: "6px 2px", borderTop: "0.5px solid var(--dsw-alias-border-l2)" } },
+                h("input", { type: "checkbox", checked: on, onChange: () => toggle(entry), style: { marginTop: "3px" } }),
+                h("div", { style: { flex: "1 1 auto", minWidth: 0 } },
+                  h("div", { style: { ...strong, fontSize: "12.5px" } }, item.name + (meta.version ? " · v" + meta.version : "")),
+                  h("div", { style: hint }, item.description || ""),
+                  item.why ? h("div", { style: { ...hint, color: "var(--dsw-alias-label-tertiary, #8b8f99)" } }, "为什么：" + item.why) : null))
+            })) : null,
           search.error ? h("div", { style: { ...hint, color: "#ffb020" } }, search.error) : null,
           h("div", { style: { display: "flex", flexDirection: "column", gap: "3px", maxHeight: "320px", overflow: "auto" } },
             rows.length === 0

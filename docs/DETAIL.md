@@ -74,6 +74,13 @@ data/<目录名>/**      插件数据快照（小文本）
 - 分组：只读 `.dsh-market/state.json` 做折叠展示；按组打包会把组名写进清单，装到同样装了市场的机器上并进同名分组（`applyMarketGroups`，同名组并成员、其它键原样保留）。
 - 没装市场：打包、装包、检测、校验、配置回填、三处入口照常，只少 Discover 界面与目录搜索。
 
+## AI 搜索（借用插件市场的新接口）
+
+- 市场新版本提供 `POST /dsh-market/ai-search`：body `{query}`，返回 `{result:{intro, picks:[{name, description, why, …}], model}}`；409 = `no-model`（还没配模型）。
+- 打开开关后：输入一句话 → 回车或点「AI 来找」→ 拿回挑中的条目 → 自动补一次 `/catalog/lookup` 取版本 → 勾选即进打包（按市场版本装）。
+- 失败分三种：旧版市场没有路由（开关不出现）、`no-model`（提示去「设置 → 模型」配一个）、模型报错（原样显示消息，关键词搜索照常可用）。
+- 不在本插件里保存模型与 Key：模型调用完全由插件市场那边完成，这里只做一层界面与结果映射。市场也没有自己的 token——它走宿主 `llm` 服务 + `agentDefaultModel.currentSelection()`，扣的是你「设置 → 模型」里的那把 Key。
+
 ## 安装顺序与进度窗
 
 - 打包与安装共用任务队列：`POST /pack|/install { async: true }` 立即返回 job，`GET /jobs` 轮询；`/jobs/cancel` 终止（包在内存组装，取消不落盘）、`/jobs/ack` 续跑、`/jobs/dismiss` 删记录、`/jobs/clear` 清收尾。

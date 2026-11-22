@@ -342,6 +342,8 @@ export default {
       json(res, result.ok ? 200 : 502, { ...result, catalog: (() => { try { return catalogSummary(config) } catch { return null } })() })
     })
 
+    // 同一个词来回翻页、切分类时不必重算：结果只跟目录、已装清单和参数有关，留 20 秒
+    const searchCache = new Map()
     route('/dsh-modpack-kit/api/catalog/search', async (req, res) => {
       if (!needPost(req, res)) return
       const body = await readJsonBody(req)
@@ -352,15 +354,24 @@ export default {
         // 和市场侧统一用同一套 23 类，否则按 theme/memory 筛时本机独有的插件会被漏掉
         category: localCategories[p.name] || classifyPlugin({ name: p.name, description: p.description || '' }).id,
       }))
+      const cacheKey = JSON.stringify([body.query || '', body.category || 'all', Number(body.page) || 1, Number(body.pageSize) || 0, body.sort || '', installed.length])
+      const cached = searchCache.get(cacheKey)
+      if (cached && Date.now() - cached.at < 20000) {
+        json(res, 200, cached.data)
+        return
+      }
       try {
-        json(res, 200, searchCatalog(config, {
+        const data = searchCatalog(config, {
           query: body.query,
           category: body.category,
           page: body.page,
           pageSize: body.pageSize,
           sort: body.sort,
           installed,
-        }))
+        })
+        searchCache.set(cacheKey, { at: Date.now(), data })
+        if (searchCache.size > 40) searchCache.delete(searchCache.keys().next().value)
+        json(res, 200, data)
       } catch (e) {
         json(res, 500, { ok: false, error: String((e && e.message) || e), items: [] })
       }

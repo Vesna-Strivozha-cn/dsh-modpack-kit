@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Modpack Kit",
-    "description": "Who says DSH cannot do modpacks? (Put these plugins together and it is genuinely good.) Bundle DeepSeek Harness plugins with their config and data into one .dshpack: one-click install, works offline, three strategies, groups share the plugin market. npm: https://www.npmjs.com/package/dsh-modpack-kit",
+    "description": "Who says DSH cannot do modpacks? (Put these plugins together and it is genuinely good.) Bundle DeepSeek Harness plugins with their config and data into one .dshpack: one-click install, works offline, three strategies, groups share the plugin market. npm: https://www.npmjs.com/package/dsh-modpack-kit. Search integrates the market AI search.",
     "detail": "docs/DETAIL.md"
   }
 }
