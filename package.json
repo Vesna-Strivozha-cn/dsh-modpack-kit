@@ -38,7 +38,11 @@
     "one-click-install",
     "offline-install",
     "migrate-plugins",
-    "ai-search"
+    "ai-search",
+    "一键打包",
+    "自定义安装",
+    "插件打包",
+    "离线安装"
   ],
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Vesna-Strivozha-cn",
