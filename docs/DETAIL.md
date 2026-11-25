@@ -92,7 +92,7 @@ data/<目录名>/**      插件数据快照（小文本）
 ## 安装顺序与进度窗
 
 - 打包与安装共用任务队列：`POST /pack|/install { async: true }` 立即返回 job，`GET /jobs` 轮询；`/jobs/cancel` 终止（包在内存组装，取消不落盘）、`/jobs/ack` 续跑、`/jobs/dismiss` 删记录、`/jobs/clear` 清收尾。
-- 悬浮进度窗可拖动（位置存 `localStorage`），没任务时收起只留「进度」胶囊；**胶囊本身也可拖动**（位移 >3px 算拖，否则算点开），展开/收起时用 `dockPos` 锚住靠边的一侧（`rightAnchor`/`bottomAnchor` 判半边），右边/下边距保持不变往内长，窗口缩放时重算；收尾记录按 `jobKeepSeconds`（默认 0）与心跳（running 超 10 分钟判失败）处理。
+- 悬浮进度窗可拖动（位置存 `localStorage`），没任务时收起只留「进度」胶囊；**胶囊本身也可拖动**（位移 >3px 算拖，否则算点开），展开/收起时用 `dockPos` 锚住靠边的一侧（`rightAnchor`/`bottomAnchor` 判半边），右边/下边距保持不变往内长，窗口缩放时重算；顶部预留 `DOCK_TOP_INSET = 56`，不让窗口停到 DSH 标签行上；标签行「召回进度窗」通过 `requestDockReset()`/`subscribeDockReset()` 清掉 `localStorage` 位置并回到右下角；收尾记录按 `jobKeepSeconds`（默认 0）与心跳（running 超 10 分钟判失败）处理。
 - 安装预览：逐插件勾选、有问题的置顶（缺依赖 / 引擎版本不符）、每个带配置的插件可选「包内配置 / 保持本机」、「装后整体启用」、「装后同步市场分组」。
 - 离线安装：勾「离线安装」或探不到 registry 时，只装带本体的插件；只记版本的会逐条说明「联网后再试」。
 

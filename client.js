@@ -490,6 +490,20 @@ window.__ModuleLoader__.load({
     function writeDockPos(pos) {
       try { if (typeof localStorage !== "undefined" && pos) localStorage.setItem(DOCK_POS_KEY, JSON.stringify(pos)) } catch { /* 存不了就算了，不影响本场使用 */ }
     }
+    function clearDockPos() {
+      try { if (typeof localStorage !== "undefined") localStorage.removeItem(DOCK_POS_KEY) } catch { /* 同上 */ }
+    }
+    // DSH 顶栏 / 标签行大约占这么高：窗口别停在那上面，否则会盖住界面的按钮
+    const DOCK_TOP_INSET = 56
+    // 召回：标签行那个显眼按钮通过它把进度窗叫回默认位置
+    const dockReset = { subs: new Set() }
+    function requestDockReset() {
+      for (const fn of Array.from(dockReset.subs)) { try { fn() } catch { /* 某个订阅坏了不该影响别的 */ } }
+    }
+    function subscribeDockReset(fn) {
+      dockReset.subs.add(fn)
+      return () => { dockReset.subs.delete(fn) }
+    }
     function viewportSize() {
       const width = typeof window !== "undefined" && Number(window.innerWidth) ? Number(window.innerWidth) : 1280
       const height = typeof window !== "undefined" && Number(window.innerHeight) ? Number(window.innerHeight) : 800
@@ -514,6 +528,13 @@ window.__ModuleLoader__.load({
       const pillRef = useRef(null)
       // 窗口大小变了要重算贴边位置，所以留一个 tick 触发重渲染
       const [, setViewportTick] = useState(0)
+      // 标签行的「召回」把窗口叫回右下角默认位置
+      useEffect(() => subscribeDockReset(() => {
+        clearDockPos()
+        setPos(null)
+        setHidden(false)
+        setPinned(true)
+      }), [])
       const running = jobs.filter((job) => job.status === "running")
       const visible = !hidden && (pinned || running.length > 0)
 
@@ -555,7 +576,7 @@ window.__ModuleLoader__.load({
         if (!drag || !event || typeof event.clientX !== "number") return
         const { width, height } = viewportSize()
         const left = Math.min(Math.max(4, event.clientX - drag.dx), Math.max(4, width - drag.width - 4))
-        const top = Math.min(Math.max(4, event.clientY - drag.dy), Math.max(4, height - drag.height - 4))
+        const top = Math.min(Math.max(DOCK_TOP_INSET, event.clientY - drag.dy), Math.max(DOCK_TOP_INSET, height - drag.height - 4))
         if (Math.abs(left - drag.startX) > 3 || Math.abs(top - drag.startY) > 3) drag.moved = true
         drag.last = { x: Math.round(left), y: Math.round(top) }
         setPos(drag.last)
@@ -592,7 +613,7 @@ window.__ModuleLoader__.load({
         const pillPos = anchor
           ? {
               left: Math.min(Math.max(4, anchor.x), Math.max(4, vp.width - pillW - 4)) + "px",
-              top: Math.min(Math.max(4, anchor.y), Math.max(4, vp.height - pillH - 4)) + "px",
+              top: Math.min(Math.max(DOCK_TOP_INSET, anchor.y), Math.max(DOCK_TOP_INSET, vp.height - pillH - 4)) + "px",
             }
           : { right: "16px", bottom: "16px" }
         const summonStyle = {
@@ -694,7 +715,7 @@ window.__ModuleLoader__.load({
           const gap = Math.max(4, vp.height - (pos.y + collapsedH))
           style.bottom = Math.min(gap, Math.max(4, vp.height - dockHeight - 4)) + "px"
         } else {
-          style.top = Math.min(Math.max(4, pos.y), Math.max(4, vp.height - dockHeight - 4)) + "px"
+          style.top = Math.min(Math.max(DOCK_TOP_INSET, pos.y), Math.max(DOCK_TOP_INSET, vp.height - dockHeight - 4)) + "px"
         }
         return style
       })()
@@ -2134,6 +2155,13 @@ window.__ModuleLoader__.load({
         title: "只刷新整合包自己：重新读一遍插件列表、市场目录与进度窗，再把三个面板重挂一次；不调用别的插件",
         onClick: doRefresh,
       }, refreshing ? "刷新中…" : (refreshMsg ? "刷新失败" : refreshedAt ? "刷新 ✓" : "刷新"))
+      // 拖到角上挡住界面时用这个：位置清掉、回到右下角默认位，并且强制显示
+      const recallBtn = h("button", {
+        type: "button",
+        style: { ...chipBtn, background: "#4C7DF0", borderColor: "#4C7DF0", color: "#fff", fontWeight: 600 },
+        title: "把进度窗叫回右下角的默认位置（拖到角落挡住了界面就用这个）",
+        onClick: () => { requestDockReset() },
+      }, "召回进度窗")
       const tabs = [
         ["pack", "打包"],
         ["install", "安装 / 导入"],
@@ -2189,7 +2217,7 @@ window.__ModuleLoader__.load({
           },
         },
           h("div", { style: { maxWidth: "1020px", margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: "10px" } },
-            h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine, refreshNote ? h("span", { style: hint }, refreshNote) : null, refreshMsg ? h("span", { style: { ...hint, color: "#ff6b6b" } }, refreshMsg) : null, refreshBtn),
+            h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine, refreshNote ? h("span", { style: hint }, refreshNote) : null, refreshMsg ? h("span", { style: { ...hint, color: "#ff6b6b" } }, refreshMsg) : null, recallBtn, refreshBtn),
           unlagNode,
             unlagNode,
             panels,
@@ -2206,7 +2234,7 @@ window.__ModuleLoader__.load({
           h("div", { style: { display: "flex", alignItems: "baseline", gap: "10px", flexWrap: "wrap" } },
             h("h2", { style: { margin: 0, fontSize: "20px", fontWeight: 600 } }, "整合包"),
             h("span", { style: hint }, ((status && status.config && status.config.tagline) || "谁说 dsh 不能整整合包呢？（你说这几个插件整一块不牛逼坏了）"))),
-          h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine, refreshNote ? h("span", { style: hint }, refreshNote) : null, refreshMsg ? h("span", { style: { ...hint, color: "#ff6b6b" } }, refreshMsg) : null, refreshBtn),
+          h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine, refreshNote ? h("span", { style: hint }, refreshNote) : null, refreshMsg ? h("span", { style: { ...hint, color: "#ff6b6b" } }, refreshMsg) : null, recallBtn, refreshBtn),
           panels,
           footNote,
           h(RepoFooter, null)),

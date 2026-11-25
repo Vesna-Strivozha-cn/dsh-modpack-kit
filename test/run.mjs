@@ -1873,6 +1873,17 @@ test('进度窗：最小化也能拖，展开时按边界往内侧贴', () => {
   assert(cli.includes('style.right = Math.min(gap, Math.max(4, vp.width - dockWidth - 4)) + "px"'), '展开时右边距不变，向左多占')
   assert(cli.includes('style.bottom = Math.min(gap, Math.max(4, vp.height - dockHeight - 4)) + "px"'), '展开时下边距不变，向上多占')
   assert(cli.includes('window.addEventListener("resize"'), '窗口大小变了要重算贴边位置')
+  // 拖到右上角会盖住 DSH 自己的标签行：留出顶栏高度
+  assert(cli.includes('const DOCK_TOP_INSET = 56'), '要有顶栏安全距离')
+  assert(cli.includes('Math.max(DOCK_TOP_INSET, event.clientY - drag.dy)'), '拖动时不许贴到顶栏上')
+  assert(cli.includes('Math.max(DOCK_TOP_INSET, pos.y)'), '收起/展开的位置也要避开顶栏')
+  // 标签行要有显眼的「召回」，把窗口叫回默认位置
+  assert(cli.includes('"召回进度窗"'), '刷新旁边要有召回按钮')
+  assert(cli.includes('function requestDockReset()'), '召回要能广播到进度窗')
+  assert(cli.includes('subscribeDockReset'), '进度窗要订阅召回')
+  assert(cli.includes('clearDockPos()'), '召回要清掉记住的位置')
+  assert(cli.includes('background: "#4C7DF0"'), '召回按钮要显眼（实心）')
+  assert(!/召回进度窗[\s\S]{0,200}刷新中/.test(cli), '召回不能混进刷新的状态文案')
 })
 
 test('解除卡顿：本机装了 dsh-unlag 才出按钮，悬浮写明来源', () => {
