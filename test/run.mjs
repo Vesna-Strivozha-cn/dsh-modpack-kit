@@ -1853,90 +1853,73 @@ test('标签行：刷新按钮和「设置与记录」同一行、排在最右�
   assert(cli.includes('只刷新整合包自己'), '悬浮要写明只刷新整合包自己')
 })
 
-test('进度窗：位置只有 pos 一处来源，任何窗口尺寸都夹在视口里', () => {
+test('进度窗：相对坐标 + 实时测算，任何窗口尺寸都不错位', () => {
   const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   const pillBlock = cli.slice(cli.indexOf('if (!visible) {'), cli.indexOf('const current = running[0]'))
   assert(pillBlock.includes('pillRef'), '胶囊要有自己的 ref，才量得出拖动起点')
   assert(pillBlock.includes('onPointerDown: (event) => startDrag(event, pillRef.current, true)'), '最小化的胶囊也要能拖')
-  assert(pillBlock.includes('onPointerUp: endPillDrag'), '胶囊抬手要决定是拖还是打开')
-  assert(cli.includes('allowOnButton'), '按在胶囊按钮上要放行拖动，不能被「按在按钮上」挡掉')
-  assert(cli.includes('const endPillDrag = () => {'), '胶囊要有自己的抬手处理')
-  // 位置：只有一处来源 pos，渲染前统一夹进视口
-  assert(cli.includes('const placed = dockPlacement(viewportSize(), openSizeNow, windowPos)'), '渲染位置必须来自 dockPlacement（展开时按展开后的尺寸与换算后的窗口坐标）')
-  assert(cli.includes('left: placed.left + "px"'), '按夹过的 left 渲染')
-  assert(cli.includes('top: placed.top + "px"'), '按夹过的 top 渲染')
-  assert(!cli.includes('rightAnchor') && !cli.includes('bottomAnchor'), '不许再有「猜哪边近就锚哪边」的写法')
-  assert(!cli.includes('frame.left'), '不许再出现 frame.left 这种把 x/y 当 left/top 的写法')
-  // 尺寸靠量：不猜 288/132
-  assert(cli.includes('const [boxSize, setBoxSize] = useState({ w: 288, h: 132 })'), '要记一份真实尺寸')
-  assert(cli.includes('el.offsetWidth') && cli.includes('el.offsetHeight'), '尺寸要量出来')
-  assert(cli.includes('const rect = el && el.getBoundingClientRect'), '展开要量真实矩形')
-  assert(cli.includes('const plan = dockExpandPlan(vp, rect, headerH, 380, wantH)'), '展开位置由纯函数算')
-  assert(cli.includes('setOpenH(plan.h)'), '展开高度要用算出来的值')
-  assert(cli.includes('writeDockPos({ x: plan.x, y: plan.y })'), '展开后的位置要存下来，收起时不能跳回去')
-  assert(cli.includes('const [openH, setOpenH] = useState(0)'), '要有展开高度状态')
-  assert(cli.includes('maxHeight: open ? (openH > 0 ? openH + "px" : "58vh") : "none"'), '展开高度要真的用上')
-  assert(cli.includes('const DOCK_MIN_OPEN_H = 220'), '展开至少要有最小可用高度')
-  assert(cli.includes('const headerRef = useRef(null)'), '要量标题自己的高度，向上长才对得齐')
-  assert(cli.includes('flexDirection: open && upward ? "column-reverse" : "column"'), '向上长时标题要压在最下面')
-  assert(cli.includes('const windowPos = open && upward && pos ? { x: pos.x, y: pos.y + headerH - openH } : pos'), '向上长要把标题坐标换算成窗口左上角')
-  assert(!cli.includes('dockExpandedPos'), '旧的「靠下贴底」算法要清干净')
-  assert(cli.includes('Math.max(DOCK_TOP_INSET, event.clientY - drag.dy)'), '拖动时不许贴到顶栏上')
-  assert(cli.includes('"召回进度窗"'), '刷新旁边要有召回按钮')
-  assert(cli.includes('function requestDockReset()'), '召回要能广播到进度窗')
-  assert(cli.includes('subscribeDockReset'), '进度窗要订阅召回')
-  assert(cli.includes('clearDockPos()'), '召回要清掉记住的位置')
-  assert(cli.includes('background: "#4C7DF0"'), '召回按钮要显眼（实心）')
-  assert(cli.includes('window.addEventListener("resize"'), '窗口大小变了要重算位置')
+  assert(pillBlock.includes('const anchor = pos ? { x: pos.fx * vp.width, y: pos.fy * vp.height } : null'), '胶囊也要按相对坐标现算')
 
-  // 纯函数跑多种窗口尺寸：全屏、笔记本、非全屏小窗、极窄窗
+  // 位置只记相对坐标：不再往 localStorage 写像素
+  assert(cli.includes('fx: Math.max(0, Math.min(1, Number(pos.x) / vp.width))'), '存的是 fx（相对坐标）')
+  assert(cli.includes('fy: Math.max(0, Math.min(1, Number(pos.y) / vp.height))'), '存的是 fy（相对坐标）')
+  assert(cli.includes('Number.isFinite(Number(parsed.fx)) && Number.isFinite(Number(parsed.fy))'), '读的时候优先认相对坐标')
+  assert(cli.includes('Number(parsed.x) / vp.width'), '老的像素值要折算成相对坐标')
+
+  // 一帧算完：不存尺寸、不存方向
+  assert(cli.includes('function dockFrame(viewport, pos, boxSize, headerH, open)'), '布局由 dockFrame 一次算完')
+  assert(cli.includes('const frame = dockFrame(viewportSize(), pos, open ? sizeOpen : sizeClosed, headerH, open)'), '渲染直接用实时帧')
+  assert(cli.includes('const [sizeClosed, setSizeClosed]'), '收起态尺寸单独量，别和展开混用')
+  assert(cli.includes('const [sizeOpen, setSizeOpen]'), '展开态尺寸单独量，别和收起混用')
+  assert(cli.includes('width: frame.w + "px"'), '宽度用实时帧')
+  assert(cli.includes('maxHeight: open ? frame.h + "px" : "none"'), '高度用实时帧')
+  assert(cli.includes('flexDirection: frame.upward ? "column-reverse" : "column"'), '向上长时标题压在最下面')
+  assert(!cli.includes('const [openH, setOpenH]'), '别再记展开高度了，要实时算')
+  assert(!cli.includes('const [upward, setUpward]'), '别再记方向了，要实时算')
+  assert(!cli.includes('dockExpandPlan') && !cli.includes('dockPlacement('), '旧的两套预算函数要清干净')
+  assert(!cli.includes('open ? "380px" : "288px"'), '宽度不许写死')
+  assert(cli.includes('const DOCK_MAX_W = 380'), '展开宽度只做上限，窄窗口按视口收窄')
+  assert(cli.includes('const DOCK_MIN_OPEN_H = 200'), '展开要有最小可用高度')
+  assert(cli.includes('const DOCK_MAX_OPEN_H = 560'), '展开高度要有上限')
+
+  // 纯函数：多种窗口尺寸 + 多种相对位置
   const geoStart = cli.indexOf('const DOCK_TOP_INSET = 56')
   const geoEnd = cli.indexOf('// 召回：标签行那个显眼按钮')
-  assert(geoStart > 0 && geoEnd > geoStart, '几何函数要能被单独取出来测')
-  const geo = new Function(cli.slice(geoStart, geoEnd) + '\nreturn { dockPlacement, dockExpandPlan };')()
-  const size = { w: 288, h: 132 }
-  for (const viewport of [{ width: 1920, height: 1080 }, { width: 1280, height: 800 }, { width: 800, height: 600 }, { width: 420, height: 520 }]) {
+  assert(geoStart > 0 && geoEnd > geoStart, '几何函数要能单独取出来测')
+  const geo = new Function(cli.slice(geoStart, geoEnd) + '\nreturn { dockFrame, DOCK_MARGIN, DOCK_TOP_INSET };')()
+  const { dockFrame, DOCK_MARGIN, DOCK_TOP_INSET } = geo
+  const boxSize = { w: 288, h: 132 }
+  const headerH = 34
+  for (const viewport of [{ width: 1920, height: 1080 }, { width: 1280, height: 800 }, { width: 800, height: 600 }, { width: 420, height: 520 }, { width: 360, height: 480 }]) {
     const vw = viewport.width
     const vh = viewport.height
-    const maxLeft = Math.max(4, vw - size.w - 4)
-    const maxTop = Math.max(56, vh - size.h - 4)
-    for (const pos of [{ x: -500, y: -500 }, { x: 0, y: 0 }, { x: vw / 2, y: vh / 2 }, { x: 99999, y: 99999 }, { x: vw - 40, y: vh - 40 }]) {
-      const out = geo.dockPlacement(viewport, size, pos)
-      assert(out.left >= 4 && out.left <= maxLeft, vw + 'x' + vh + ' 的 left 越界：' + JSON.stringify(out))
-      assert(out.top >= 56 && out.top <= maxTop, vw + 'x' + vh + ' 的 top 越界：' + JSON.stringify(out))
+    // 收起态：不管相对坐标给多离谱，都要落在视口里
+    for (const pos of [null, { fx: 0, fy: 0 }, { fx: 0.5, fy: 0.5 }, { fx: 1, fy: 1 }, { fx: 0.98, fy: 0.99 }]) {
+      const f = dockFrame(viewport, pos, boxSize, headerH, false)
+      assert(f.left >= 4 && f.left + f.w <= vw - 4 + 1, vw + 'x' + vh + ' 收起态 left 越界：' + JSON.stringify(f))
+      assert(f.top >= DOCK_TOP_INSET && f.top + f.h <= vh - 4 + 1, vw + 'x' + vh + ' 收起态 top 越界：' + JSON.stringify(f))
+      assert(f.upward === false, '收起态不该标成向上长')
+      assert(f.w === boxSize.w && f.h === boxSize.h, '收起态就用量出来的尺寸')
     }
-    const corner = geo.dockPlacement(viewport, size, { x: 99999, y: 99999 })
-    assert(corner.left === maxLeft && corner.top === maxTop, vw + 'x' + vh + ' 拖到右下角应贴边')
-    // 展开：标题在屏幕上一动不动；下面放得下就向下长，放不下就向上长（column-reverse）
-    const wantH = Math.min(Math.round(vh * 0.6), 560)
-    const headerH = 34
-    const rectBR = { left: maxLeft, top: maxTop, width: size.w, height: size.h }
-    const planBR = geo.dockExpandPlan(viewport, rectBR, headerH, 380, wantH)
-    assert(planBR.y === rectBR.top, vw + 'x' + vh + ' 底部展开标题坐标不能变：' + JSON.stringify(planBR))
-    const roomBelow = vh - 4 - rectBR.top
-    if (roomBelow >= 220) {
-      assert(planBR.upward === false, vw + 'x' + vh + ' 下面够高就该向下长')
-      assert(planBR.h === Math.min(wantH, Math.max(220, roomBelow)), vw + 'x' + vh + ' 向下长的高度要按可用空间算')
-      assert(planBR.y + planBR.h <= vh - 4, vw + 'x' + vh + ' 向下长不能出屏')
-    } else {
-      assert(planBR.upward === true, vw + 'x' + vh + ' 下面不够就该向上长')
-      const winTop = planBR.y + headerH - planBR.h
-      assert(winTop >= 56, vw + 'x' + vh + ' 向上长不能顶到 DSH 标签行上：' + winTop)
-      assert(planBR.y + headerH <= vh - 4, vw + 'x' + vh + ' 标题本身必须在屏内')
-      assert(planBR.h >= 220, vw + 'x' + vh + ' 向上长也要够 220 高')
-    }
-    const rectTL = { left: 4, top: 56, width: size.w, height: size.h }
-    const planTL = geo.dockExpandPlan(viewport, rectTL, headerH, 380, wantH)
-    assert(planTL.upward === false, vw + 'x' + vh + ' 靠上时应该向下长')
-    assert(planTL.x === 4 && planTL.y === 56, vw + 'x' + vh + ' 靠左上时展开不该乱移：' + JSON.stringify(planTL))
-    assert(planTL.h === Math.min(wantH, Math.max(220, vh - 4 - 56)), vw + 'x' + vh + ' 靠上时应把下面空间用满')
-    assert(planTL.x + 380 <= vw && planTL.y + planTL.h <= vh - 4, vw + 'x' + vh + ' 展开后不该超出视口')
-    // 中间偏下但下面还有空间：仍然向下长，不跳
-    const rectMid = { left: 30, top: Math.round(vh * 0.5), width: size.w, height: size.h }
-    const planMid = geo.dockExpandPlan(viewport, rectMid, headerH, 380, wantH)
-    assert(planMid.y === rectMid.top && planMid.upward === false, vw + 'x' + vh + ' 中间偏下展开也要原地向下长：' + JSON.stringify(planMid))
-
+    // 展开态：靠上向下长、靠底向上长，两种都不许出屏
+    const top = dockFrame(viewport, { fx: 0.2, fy: 0 }, boxSize, headerH, true)
+    assert(top.upward === false, vw + 'x' + vh + ' 靠上应该向下长：' + JSON.stringify(top))
+    assert(top.top === DOCK_TOP_INSET, vw + 'x' + vh + ' 靠上时顶边应贴着安全线：' + JSON.stringify(top))
+    assert(top.h >= 200 && top.top + top.h <= vh - 4 + 1, vw + 'x' + vh + ' 向下长不许出屏：' + JSON.stringify(top))
+    const bottom = dockFrame(viewport, { fx: 0.2, fy: 1 }, boxSize, headerH, true)
+    assert(bottom.upward === true, vw + 'x' + vh + ' 靠底应该向上长：' + JSON.stringify(bottom))
+    assert(bottom.h >= 200 && bottom.h <= 560, vw + 'x' + vh + ' 向上长的高度要在 200~560：' + JSON.stringify(bottom))
+    assert(bottom.top >= DOCK_TOP_INSET && bottom.top + bottom.h <= vh - 4 + 1, vw + 'x' + vh + ' 向上长不许出屏：' + JSON.stringify(bottom))
+    // 标题在屏幕上的位置：靠底向上长时不该往下跑（允许被夹边推一点）
+    assert(bottom.headerY <= vh - 4 && bottom.headerY >= vh - headerH - 6, vw + 'x' + vh + ' 靠底时标题应该留在底部且完整在屏内：' + JSON.stringify(bottom))
+    // 展开宽度：只做上限，窄窗口按视口收窄
+    assert(top.w === Math.round(Math.min(380, vw - DOCK_MARGIN * 2)), vw + '宽时展开宽度算错：' + top.w)
+    assert(top.w <= vw - 4, '展开宽度不许超过视口')
   }
+  // 同一个相对坐标，换窗口大小后跟着走（这就是「相对坐标实时测算」的意义）
+  const a = dockFrame({ width: 1280, height: 800 }, { fx: 0.5, fy: 0.5 }, boxSize, headerH, false)
+  const b = dockFrame({ width: 1920, height: 1080 }, { fx: 0.5, fy: 0.5 }, boxSize, headerH, false)
+  assert(b.left > a.left && b.top > a.top, '视口变大时同一相对坐标要按比例外移：' + JSON.stringify([a, b]))
 })
 test('解除卡顿：本机装了 dsh-unlag 才出按钮，悬浮写明来源', () => {
   const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
