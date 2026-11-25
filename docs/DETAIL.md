@@ -81,6 +81,10 @@ data/<目录名>/**      插件数据快照（小文本）
 - 失败分三种：旧版市场没有路由（开关不出现）、`no-model`（提示去「设置 → 模型」配一个）、模型报错（原样显示消息，关键词搜索照常可用）。
 - 不在本插件里保存模型与 Key：模型调用完全由插件市场那边完成，这里只做一层界面与结果映射。市场也没有自己的 token——它走宿主 `llm` 服务 + `agentDefaultModel.currentSelection()`，扣的是你「设置 → 模型」里的那把 Key。
 
+## 刷新按钮
+
+标签行最右边是「刷新」：装了「解除卡顿」（`dsh-unlag`）时，它调用 `POST /dsh-unlag/reload?requestId=…`（带 `x-dsh-unlag: 1`），由那个插件执行一次真正的重载；没装时退回只重读 `/status` 并让三个面板重挂（`gen` 变化 → 换 `key`），旁边会写明「只重读了 DSH 状态」。失败原因显示在按钮左边。
+
 ## 插件市场侧栏入口与「解除卡顿」
 
 - 设置里的「强制关闭插件市场在侧栏里的那一行」：写市场的 `POST /dsh-market/sidebar-entry { enabled: false }`，只改它存在 `<profile>/.dsh-market/state.json` 的 `sidebarEntry`，不改安装状态；市场用 409 拒绝「三个入口全关」时如实显示原因。开机时若开关为真，客户端会再确认一次。

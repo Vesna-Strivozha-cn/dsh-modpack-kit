@@ -1836,13 +1836,20 @@ test('插件市场：设置里能强制关掉它在侧栏里的那一行，悬�
 test('标签行：刷新按钮和「设置与记录」同一行、排在最右边', () => {
   const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   assert(cli.includes('await load(3)'), 'Page 要把重新读状态的能力传下去')
-  assert(cli.includes('envLine, refreshMsg ? h("span"'), '刷新失败原因要显示在标签行里')
+  assert(cli.includes('envLine, refreshNote ? h("span"'), '刷新的结果说明要显示在标签行里')
+  assert(cli.includes('refreshMsg ? h("span"'), '刷新失败原因要显示在标签行里')
   assert(cli.includes('refreshBtn)'), '刷新按钮要排在标签行末尾')
   assert(cli.includes('refreshing ? "刷新中…"'), '刷新中要有反馈')
   assert(cli.includes('重新读取 DSH 状态'), '悬浮要说明刷新做了什么')
   assert(cli.includes('setGen((n) => n + 1)'), '刷新后要让面板重挂，否则看起来像没反应')
   assert(cli.includes('key: "pack-" + gen'), '面板要用 gen 当 key')
   assert(cli.includes('刷新失败：'), '刷新失败要给出原因')
+  // 刷新优先交给「解除卡顿」：装了它就走它的重载接口，没装才退回重读状态。
+  assert(cli.includes('if (unlag) {'), '刷新要先判断本机有没有解除卡顿')
+  assert(cli.includes('await pressUnlagNow()'), '装了解除卡顿就调它的刷新，而不是只重读状态')
+  assert(cli.includes('已让解除卡顿执行一次刷新'), '调完要说明这次刷新是谁做的')
+  assert(cli.includes('没装解除卡顿（dsh-unlag）：只重读了 DSH 状态'), '没装时要说清只重读了状态')
+  assert(cli.includes('让插件市场里的「解除卡顿」'), '悬浮要写明这是让解除卡顿刷新')
 })
 
 test('解除卡顿：本机装了 dsh-unlag 才出按钮，悬浮写明来源', () => {

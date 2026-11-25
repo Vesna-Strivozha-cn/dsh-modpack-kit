@@ -2040,12 +2040,22 @@ window.__ModuleLoader__.load({
       const [refreshing, setRefreshing] = useState(false)
       const [refreshedAt, setRefreshedAt] = useState(0)
       const [refreshMsg, setRefreshMsg] = useState("")
+      const [refreshNote, setRefreshNote] = useState("")
+      // 刷新优先交给插件市场里的「解除卡顿」：它有一套自己的重载接口，能让卡住的页面真的重来一遍。
+      // 没装它时才退回只重读 DSH 状态（这也是装不了别的插件时唯一能做的）。
       const doRefresh = async () => {
         if (refreshing) return
         setRefreshing(true)
         setRefreshMsg("")
+        setRefreshNote("")
         try {
-          if (typeof props.onRefresh === "function") await props.onRefresh()
+          if (unlag) {
+            await pressUnlagNow()
+            setRefreshNote("已让解除卡顿执行一次刷新")
+          } else {
+            if (typeof props.onRefresh === "function") await props.onRefresh()
+            setRefreshNote("没装解除卡顿（dsh-unlag）：只重读了 DSH 状态")
+          }
           setRefreshedAt(Date.now())
         } catch (e) {
           setRefreshMsg("刷新失败：" + String((e && e.message) || e))
@@ -2058,7 +2068,7 @@ window.__ModuleLoader__.load({
         type: "button",
         style: chipBtn,
         disabled: refreshing,
-        title: "重新读取 DSH 状态：插件、市场目录与进度窗都拉一遍",
+        title: unlag ? ("让插件市场里的「解除卡顿」（dsh-unlag@" + (unlag.version || "?") + "）执行一次刷新") : "重新读取 DSH 状态：插件、市场目录与进度窗都拉一遍（本机没装解除卡顿）",
         onClick: doRefresh,
       }, refreshing ? "刷新中…" : (refreshMsg ? "刷新失败" : refreshedAt ? "刷新 ✓" : "刷新"))
       const tabs = [
@@ -2097,7 +2107,7 @@ window.__ModuleLoader__.load({
         : null
       useEffect(() => {
         if (!refreshedAt) return undefined
-        const timer = setTimeout(() => setRefreshedAt(0), 2400)
+        const timer = setTimeout(() => { setRefreshedAt(0); setRefreshNote("") }, 2400)
         return () => clearTimeout(timer)
       }, [refreshedAt])
       const envLine = h("span", { style: { ...hint, marginLeft: "auto" } },
@@ -2116,7 +2126,7 @@ window.__ModuleLoader__.load({
           },
         },
           h("div", { style: { maxWidth: "1020px", margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: "10px" } },
-            h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine, refreshMsg ? h("span", { style: { ...hint, color: "#ff6b6b" } }, refreshMsg) : null, refreshBtn),
+            h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine, refreshNote ? h("span", { style: hint }, refreshNote) : null, refreshMsg ? h("span", { style: { ...hint, color: "#ff6b6b" } }, refreshMsg) : null, refreshBtn),
           unlagNode,
             unlagNode,
             panels,
@@ -2133,7 +2143,7 @@ window.__ModuleLoader__.load({
           h("div", { style: { display: "flex", alignItems: "baseline", gap: "10px", flexWrap: "wrap" } },
             h("h2", { style: { margin: 0, fontSize: "20px", fontWeight: 600 } }, "整合包"),
             h("span", { style: hint }, ((status && status.config && status.config.tagline) || "谁说 dsh 不能整整合包呢？（你说这几个插件整一块不牛逼坏了）"))),
-          h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine, refreshMsg ? h("span", { style: { ...hint, color: "#ff6b6b" } }, refreshMsg) : null, refreshBtn),
+          h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine, refreshNote ? h("span", { style: hint }, refreshNote) : null, refreshMsg ? h("span", { style: { ...hint, color: "#ff6b6b" } }, refreshMsg) : null, refreshBtn),
           panels,
           footNote,
           h(RepoFooter, null)),
