@@ -514,21 +514,24 @@ window.__ModuleLoader__.load({
       }
     }
     const DOCK_MIN_OPEN_H = 220         // 展开后至少要有这么高，再矮就没法看了
-    // 展开时**标题不搬家**：优先保持原位向下长，高度不够就只把最小可用高度凑出来，
-    // 只有横向顶到右边缘时才向左让。绝不按「靠下就贴底」那种做法把窗口甩到屏幕中间。
-    // 返回 { x, y, h }：h 是要给窗口设的高度上限，x/y 是左上角。
-    function dockExpandedPos(viewport, rect, openSize) {
+    // 展开时**标题永远不动**，只决定往上长还是往下长：
+    //   · 下面放得下 → 向下长，窗口左上角就是标题原位；
+    //   · 下面放不下、上面放得下 → 向上长：窗口底边贴住标题底部，标题压在窗口最下面，
+    //     所以标题在屏幕上的位置一点没变（返回 upward: true，由渲染层用 column-reverse 摆）。
+    // y 一律是「标题左上角」的屏幕坐标，不受向上/向下影响；h 是窗口高度上限。
+    function dockExpandPlan(viewport, rect, headerH, wantW, wantH) {
       const vw = Math.max(1, Number(viewport.width) || 0)
       const vh = Math.max(1, Number(viewport.height) || 0)
-      const w = Math.max(1, Number(openSize.w) || 1)
-      const want = Math.max(DOCK_MIN_OPEN_H, Number(openSize.h) || DOCK_MIN_OPEN_H)
+      const w = Math.max(1, Number(wantW) || 1)
+      const head = Math.max(1, Number(headerH) || 1)
+      const want = Math.max(DOCK_MIN_OPEN_H, Number(wantH) || DOCK_MIN_OPEN_H)
       const roomBelow = vh - DOCK_MIN_LEFT - rect.top
-      let h = Math.min(want, Math.max(DOCK_MIN_OPEN_H, roomBelow))
-      let top = rect.top
-      if (roomBelow < DOCK_MIN_OPEN_H) top = vh - DOCK_MIN_LEFT - DOCK_MIN_OPEN_H
-      top = clampNum(top, DOCK_TOP_INSET, Math.max(DOCK_TOP_INSET, vh - h - DOCK_MIN_LEFT))
+      const roomAbove = rect.top + head - DOCK_TOP_INSET
       const left = clampNum(rect.left, DOCK_MIN_LEFT, Math.max(DOCK_MIN_LEFT, vw - w - DOCK_MIN_LEFT))
-      return { x: Math.round(left), y: Math.round(top), h: Math.round(h) }
+      if (roomBelow >= Math.min(want, DOCK_MIN_OPEN_H)) {
+        return { x: Math.round(left), y: Math.round(rect.top), h: Math.round(Math.min(want, Math.max(DOCK_MIN_OPEN_H, roomBelow))), upward: false }
+      }
+      return { x: Math.round(left), y: Math.round(rect.top), h: Math.round(Math.min(want, Math.max(DOCK_MIN_OPEN_H, roomAbove))), upward: true }
     }
     // 召回：标签行那个显眼按钮通过它把进度窗叫回默认位置
     const dockReset = { subs: new Set() }
@@ -559,18 +562,24 @@ window.__ModuleLoader__.load({
       const [open, setOpen] = useState(false)
       // 量出来的真实尺寸：拖动夹边、展开贴角都用它，绝不猜 132/288 这种数
       const [boxSize, setBoxSize] = useState({ w: 288, h: 132 })
-      // 展开时算出来的高度上限（标题留在原处，只向下长）
+      // 展开时算出来的高度上限与方向（标题留在原处：下面不够就往上长）
       const [openH, setOpenH] = useState(0)
+      const [upward, setUpward] = useState(false)
+      const [headerH, setHeaderH] = useState(34)
       useEffect(() => {
         const el = boxRef.current
         if (!el) return
         const w = Math.round(el.offsetWidth || 0)
         const h = Math.round(el.offsetHeight || 0)
         if (w > 0 && h > 0 && (w !== boxSize.w || h !== boxSize.h)) setBoxSize({ w, h })
+        const head = headerRef.current
+        const hh = head ? Math.round(head.offsetHeight || 0) : 0
+        if (hh > 0 && hh !== headerH) setHeaderH(hh)
       })
       const [dockMsg, setDockMsg] = useState("")
       const dragRef = useRef(null)
       const boxRef = useRef(null)
+      const headerRef = useRef(null)
       const pillRef = useRef(null)
       // 窗口大小变了要重算贴边位置，所以留一个 tick 触发重渲染
       const [, setViewportTick] = useState(0)
@@ -626,7 +635,10 @@ window.__ModuleLoader__.load({
         const left = Math.min(Math.max(DOCK_MIN_LEFT, event.clientX - drag.dx), Math.max(DOCK_MIN_LEFT, vp.width - w - DOCK_MIN_LEFT))
         const top = Math.min(Math.max(DOCK_TOP_INSET, event.clientY - drag.dy), Math.max(DOCK_TOP_INSET, vp.height - h - DOCK_MIN_LEFT))
         if (Math.abs(left - drag.startX) > 3 || Math.abs(top - drag.startY) > 3) drag.moved = true
-        drag.last = { x: Math.round(left), y: Math.round(top) }
+        drag.last = {
+          x: Math.round(left),
+          y: open && upward ? Math.round(top + openH - headerH) : Math.round(top),
+        }
         setPos(drag.last)
       }
       const endDrag = () => {
@@ -641,6 +653,7 @@ window.__ModuleLoader__.load({
         if (open) {
           setOpen(false)
           setOpenH(0)
+          setUpward(false)
           return
         }
         const el = boxRef.current
@@ -648,11 +661,13 @@ window.__ModuleLoader__.load({
           ? el.getBoundingClientRect()
           : { left: pos ? pos.x : 0, top: pos ? pos.y : 0, width: boxSize.w, height: boxSize.h }
         const vp = viewportSize()
-        const openSize = { w: 380, h: Math.min(Math.round(vp.height * 0.6), 560) }
-        const next = dockExpandedPos(vp, rect, openSize)
-        setOpenH(next.h)
-        setPos({ x: next.x, y: next.y })
-        writeDockPos({ x: next.x, y: next.y })
+        const wantH = Math.min(Math.round(vp.height * 0.6), 560)
+        const plan = dockExpandPlan(vp, rect, headerH, 380, wantH)
+        setOpenH(plan.h)
+        setUpward(plan.upward)
+        // pos 始终记「标题左上角」：向上长时也不改它，所以收起时回到原处，不会跳。
+        setPos({ x: plan.x, y: plan.y })
+        writeDockPos({ x: plan.x, y: plan.y })
         setOpen(true)
       }
       // 胶囊抬手：拖过就记住位置，没拖就是「打开」
@@ -756,7 +771,10 @@ window.__ModuleLoader__.load({
       const finished = jobs.filter((job) => job.status !== "running" && job.status !== "paused")
 
       // 位置只有一处来源：pos（左上角，{x,y}），渲染前统一夹进视口；展开时标题不搬家，只按算出来的高度向下长。
-      const placed = dockPlacement(viewportSize(), boxSize, pos)
+      // 向上长时，pos 仍是「标题坐标」；这里换算成窗口左上角再夹进视口。
+      const openSizeNow = open && openH > 0 ? { w: 380, h: openH } : boxSize
+      const windowPos = open && upward && pos ? { x: pos.x, y: pos.y + headerH - openH } : pos
+      const placed = dockPlacement(viewportSize(), openSizeNow, windowPos)
       const dockPos = placed
         ? { left: placed.left + "px", top: placed.top + "px" }
         : { right: DOCK_MARGIN + "px", bottom: DOCK_MARGIN + "px" }
@@ -776,11 +794,12 @@ window.__ModuleLoader__.load({
           background: "var(--dsw-alias-surface-1, rgba(24,26,31,.97))",
           boxShadow: "0 10px 30px rgba(0,0,0,.35)",
           display: "flex",
-          flexDirection: "column",
+          flexDirection: open && upward ? "column-reverse" : "column",
           gap: "7px",
         },
       },
         h("div", {
+          ref: headerRef,
           style: { display: "flex", alignItems: "center", gap: "8px", cursor: "grab", userSelect: "none", touchAction: "none" },
           title: "按住可以拖动；点一下展开或收起",
           onPointerDown: startDrag,

@@ -1862,7 +1862,7 @@ test('进度窗：位置只有 pos 一处来源，任何窗口尺寸都夹在视
   assert(cli.includes('allowOnButton'), '按在胶囊按钮上要放行拖动，不能被「按在按钮上」挡掉')
   assert(cli.includes('const endPillDrag = () => {'), '胶囊要有自己的抬手处理')
   // 位置：只有一处来源 pos，渲染前统一夹进视口
-  assert(cli.includes('const placed = dockPlacement(viewportSize(), boxSize, pos)'), '渲染位置必须来自 dockPlacement')
+  assert(cli.includes('const placed = dockPlacement(viewportSize(), openSizeNow, windowPos)'), '渲染位置必须来自 dockPlacement（展开时按展开后的尺寸与换算后的窗口坐标）')
   assert(cli.includes('left: placed.left + "px"'), '按夹过的 left 渲染')
   assert(cli.includes('top: placed.top + "px"'), '按夹过的 top 渲染')
   assert(!cli.includes('rightAnchor') && !cli.includes('bottomAnchor'), '不许再有「猜哪边近就锚哪边」的写法')
@@ -1871,12 +1871,16 @@ test('进度窗：位置只有 pos 一处来源，任何窗口尺寸都夹在视
   assert(cli.includes('const [boxSize, setBoxSize] = useState({ w: 288, h: 132 })'), '要记一份真实尺寸')
   assert(cli.includes('el.offsetWidth') && cli.includes('el.offsetHeight'), '尺寸要量出来')
   assert(cli.includes('const rect = el && el.getBoundingClientRect'), '展开要量真实矩形')
-  assert(cli.includes('const next = dockExpandedPos(vp, rect, openSize)'), '展开位置由纯函数算')
-  assert(cli.includes('setOpenH(next.h)'), '展开高度要用算出来的值')
-  assert(cli.includes('writeDockPos({ x: next.x, y: next.y })'), '展开后的位置要存下来，收起时不能跳回去')
+  assert(cli.includes('const plan = dockExpandPlan(vp, rect, headerH, 380, wantH)'), '展开位置由纯函数算')
+  assert(cli.includes('setOpenH(plan.h)'), '展开高度要用算出来的值')
+  assert(cli.includes('writeDockPos({ x: plan.x, y: plan.y })'), '展开后的位置要存下来，收起时不能跳回去')
   assert(cli.includes('const [openH, setOpenH] = useState(0)'), '要有展开高度状态')
   assert(cli.includes('maxHeight: open ? (openH > 0 ? openH + "px" : "58vh") : "none"'), '展开高度要真的用上')
   assert(cli.includes('const DOCK_MIN_OPEN_H = 220'), '展开至少要有最小可用高度')
+  assert(cli.includes('const headerRef = useRef(null)'), '要量标题自己的高度，向上长才对得齐')
+  assert(cli.includes('flexDirection: open && upward ? "column-reverse" : "column"'), '向上长时标题要压在最下面')
+  assert(cli.includes('const windowPos = open && upward && pos ? { x: pos.x, y: pos.y + headerH - openH } : pos'), '向上长要把标题坐标换算成窗口左上角')
+  assert(!cli.includes('dockExpandedPos'), '旧的「靠下贴底」算法要清干净')
   assert(cli.includes('Math.max(DOCK_TOP_INSET, event.clientY - drag.dy)'), '拖动时不许贴到顶栏上')
   assert(cli.includes('"召回进度窗"'), '刷新旁边要有召回按钮')
   assert(cli.includes('function requestDockReset()'), '召回要能广播到进度窗')
@@ -1889,7 +1893,7 @@ test('进度窗：位置只有 pos 一处来源，任何窗口尺寸都夹在视
   const geoStart = cli.indexOf('const DOCK_TOP_INSET = 56')
   const geoEnd = cli.indexOf('// 召回：标签行那个显眼按钮')
   assert(geoStart > 0 && geoEnd > geoStart, '几何函数要能被单独取出来测')
-  const geo = new Function(cli.slice(geoStart, geoEnd) + '\nreturn { dockPlacement, dockExpandedPos };')()
+  const geo = new Function(cli.slice(geoStart, geoEnd) + '\nreturn { dockPlacement, dockExpandPlan };')()
   const size = { w: 288, h: 132 }
   for (const viewport of [{ width: 1920, height: 1080 }, { width: 1280, height: 800 }, { width: 800, height: 600 }, { width: 420, height: 520 }]) {
     const vw = viewport.width
@@ -1903,26 +1907,35 @@ test('进度窗：位置只有 pos 一处来源，任何窗口尺寸都夹在视
     }
     const corner = geo.dockPlacement(viewport, size, { x: 99999, y: 99999 })
     assert(corner.left === maxLeft && corner.top === maxTop, vw + 'x' + vh + ' 拖到右下角应贴边')
-    // 展开：标题不搬家——靠右下角时 y 必须还是原 y，只向下长；只有实在放不下才上移最小高度
-    const want = Math.min(Math.max(220, Math.round(vh * 0.6)), 560)
-    const openSize = { w: 380, h: Math.min(Math.round(vh * 0.6), 560) }
+    // 展开：标题在屏幕上一动不动；下面放得下就向下长，放不下就向上长（column-reverse）
+    const wantH = Math.min(Math.round(vh * 0.6), 560)
+    const headerH = 34
     const rectBR = { left: maxLeft, top: maxTop, width: size.w, height: size.h }
-    const outBR = geo.dockExpandedPos(viewport, rectBR, openSize)
-    assert(outBR.x === Math.max(4, vw - openSize.w - 4), vw + 'x' + vh + ' 展开应贴右边缘 4：' + JSON.stringify(outBR))
-    const room = vh - 4 - rectBR.top
-    if (room >= 220) {
-      assert(outBR.y === rectBR.top, vw + 'x' + vh + ' 下半部分展开标题不能跳：' + JSON.stringify(outBR))
-      assert(outBR.h === Math.min(want, room), vw + 'x' + vh + ' 展开高度应尽量向下长满：' + JSON.stringify(outBR))
+    const planBR = geo.dockExpandPlan(viewport, rectBR, headerH, 380, wantH)
+    assert(planBR.y === rectBR.top, vw + 'x' + vh + ' 底部展开标题坐标不能变：' + JSON.stringify(planBR))
+    const roomBelow = vh - 4 - rectBR.top
+    if (roomBelow >= 220) {
+      assert(planBR.upward === false, vw + 'x' + vh + ' 下面够高就该向下长')
+      assert(planBR.h === Math.min(wantH, Math.max(220, roomBelow)), vw + 'x' + vh + ' 向下长的高度要按可用空间算')
+      assert(planBR.y + planBR.h <= vh - 4, vw + 'x' + vh + ' 向下长不能出屏')
     } else {
-      assert(outBR.y === vh - 4 - 220 && outBR.h === 220, vw + 'x' + vh + ' 底部空间不足时只上移最小高度：' + JSON.stringify(outBR))
+      assert(planBR.upward === true, vw + 'x' + vh + ' 下面不够就该向上长')
+      const winTop = planBR.y + headerH - planBR.h
+      assert(winTop >= 56, vw + 'x' + vh + ' 向上长不能顶到 DSH 标签行上：' + winTop)
+      assert(planBR.y + headerH <= vh - 4, vw + 'x' + vh + ' 标题本身必须在屏内')
+      assert(planBR.h >= 220, vw + 'x' + vh + ' 向上长也要够 220 高')
     }
-    assert(outBR.y + outBR.h <= vh - 4, vw + 'x' + vh + ' 展开后底边不该出屏：' + JSON.stringify(outBR))
-    assert(!(outBR.y > rectBR.top + 1), vw + 'x' + vh + ' 展开不该把标题往下拽')
     const rectTL = { left: 4, top: 56, width: size.w, height: size.h }
-    const outTL = geo.dockExpandedPos(viewport, rectTL, openSize)
-    assert(outTL.x === 4, vw + 'x' + vh + ' 靠左上时展开不该横向乱移：' + JSON.stringify(outTL))
-    assert(outTL.y === 56, vw + 'x' + vh + ' 靠左上时展开不该纵向乱移：' + JSON.stringify(outTL))
-    assert(outTL.x + openSize.w <= vw && outTL.y + outTL.h <= vh, vw + 'x' + vh + ' 展开后不该超出视口')
+    const planTL = geo.dockExpandPlan(viewport, rectTL, headerH, 380, wantH)
+    assert(planTL.upward === false, vw + 'x' + vh + ' 靠上时应该向下长')
+    assert(planTL.x === 4 && planTL.y === 56, vw + 'x' + vh + ' 靠左上时展开不该乱移：' + JSON.stringify(planTL))
+    assert(planTL.h === Math.min(wantH, Math.max(220, vh - 4 - 56)), vw + 'x' + vh + ' 靠上时应把下面空间用满')
+    assert(planTL.x + 380 <= vw && planTL.y + planTL.h <= vh - 4, vw + 'x' + vh + ' 展开后不该超出视口')
+    // 中间偏下但下面还有空间：仍然向下长，不跳
+    const rectMid = { left: 30, top: Math.round(vh * 0.5), width: size.w, height: size.h }
+    const planMid = geo.dockExpandPlan(viewport, rectMid, headerH, 380, wantH)
+    assert(planMid.y === rectMid.top && planMid.upward === false, vw + 'x' + vh + ' 中间偏下展开也要原地向下长：' + JSON.stringify(planMid))
+
   }
 })
 test('解除卡顿：本机装了 dsh-unlag 才出按钮，悬浮写明来源', () => {
