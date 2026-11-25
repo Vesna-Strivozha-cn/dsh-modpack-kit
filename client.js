@@ -477,8 +477,8 @@ window.__ModuleLoader__.load({
 
     // 进度窗：可以拖，拖过的位置记在浏览器本地；没有任务时自动收起，只留一枚唤出按钮。
     const DOCK_POS_KEY = "dsh-modpack-kit:dock-pos"
-    // 位置只记「视口相对坐标」（fx/fy，0~1 的小数），不存任何像素尺寸：
-    // 每次渲染都按当前视口实时换算，窗口拉大拉小、换屏都不会因为记住旧像素而错位。
+    // localStorage 里只存相对坐标（fx/fy，0~1），换窗口大小时按比例还原一次；
+    // 界面上的位置一律用像素，并且不存任何「算出来的高度 / 要不要向上长」这类状态。
     function readDockPos() {
       try {
         const raw = typeof localStorage !== "undefined" ? localStorage.getItem(DOCK_POS_KEY) : null
@@ -516,37 +516,30 @@ window.__ModuleLoader__.load({
     const DOCK_TOP_INSET = 56
     const DOCK_MARGIN = 12            // 离视口边缘至少留这么宽
     const DOCK_MIN_LEFT = 4
+    const DOCK_W = 300               // 收起、展开同一个宽度，简单可预期
+    const DOCK_OPEN_MAX_H = 420      // 展开时最高这么多，再多就在窗里滚动
+    const DOCK_HEAD_H = 44           // 标题行的占位高度：夹边只按它算，展开多高由可用空间决定
     const clampNum = (value, min, max) => Math.max(min, Math.min(value, max))
-    const DOCK_MIN_OPEN_H = 200      // 展开后至少要有这么高，再矮就没法看了
-    const DOCK_MAX_OPEN_H = 560      // 再高就占满屏幕了，也没必要
-    const DOCK_MAX_W = 380           // 展开时的上限宽度（窄窗口会按视口收窄）
-    // 一帧的全部布局：窗口多宽多高、放哪、要不要向上长，全部由「当前视口 + 量出来的尺寸」实时算。
-    // pos 是相对坐标（fx/fy 0~1），窗口大小一变这里重算一遍就跟着变，不存任何像素尺寸。
-    function dockFrame(viewport, pos, boxSize, headerH, open) {
+    // 和布局有关的只有这一件事：把像素位置夹回可见区。
+    // 没有「自动判定向上/向下」、也没有自动算高度——拖到哪就是哪，超出才夹回来，默认落右下角。
+    function clampDockPos(pos, viewport, size) {
       const vw = Math.max(1, Number(viewport && viewport.width) || 0)
       const vh = Math.max(1, Number(viewport && viewport.height) || 0)
-      const measuredW = Math.max(1, Number(boxSize && boxSize.w) || 288)
-      const measuredH = Math.max(1, Number(boxSize && boxSize.h) || 132)
-      const head = Math.max(1, Number(headerH) || measuredH)
-      const w = open ? Math.round(Math.min(DOCK_MAX_W, vw - DOCK_MARGIN * 2)) : measuredW
-      const anchorX = pos ? clampNum(Number(pos.fx) || 0, 0, 1) * vw : vw - w - DOCK_MARGIN
-      // 展开时标题必须完整留在屏内：相对坐标落到最底边时只夹这一帧，不动存下来的位置
-      const rawY = pos ? clampNum(Number(pos.fy) || 0, 0, 1) * vh : vh - measuredH - DOCK_MARGIN
-      const anchorY = open ? clampNum(rawY, DOCK_TOP_INSET, Math.max(DOCK_TOP_INSET, vh - head - DOCK_MIN_LEFT)) : rawY
-      const roomBelow = vh - DOCK_MARGIN - anchorY
-      const roomAbove = anchorY + head - DOCK_TOP_INSET - DOCK_MARGIN
-      let h = measuredH
-      let upward = false
-      if (open) {
-        // 下面放不下就往上长；两边都放不下时挑空间大的那边
-        upward = roomBelow < DOCK_MIN_OPEN_H && roomAbove > roomBelow
-        const room = upward ? roomAbove : roomBelow
-        h = Math.round(clampNum(room, DOCK_MIN_OPEN_H, DOCK_MAX_OPEN_H))
+      const w = Math.max(1, Number(size && size.w) || DOCK_W)
+      const h = Math.max(1, Number(size && size.h) || 44)
+      const x = pos && Number.isFinite(Number(pos.x)) ? Number(pos.x) : vw - w - DOCK_MARGIN
+      const y = pos && Number.isFinite(Number(pos.y)) ? Number(pos.y) : vh - h - DOCK_MARGIN
+      return {
+        x: Math.round(clampNum(x, DOCK_MIN_LEFT, Math.max(DOCK_MIN_LEFT, vw - w - DOCK_MIN_LEFT))),
+        y: Math.round(clampNum(y, DOCK_TOP_INSET, Math.max(DOCK_TOP_INSET, vh - h - DOCK_MIN_LEFT))),
       }
-      const winY = upward ? anchorY + head - h : anchorY
-      const left = Math.round(clampNum(anchorX, DOCK_MIN_LEFT, Math.max(DOCK_MIN_LEFT, vw - w - DOCK_MIN_LEFT)))
-      const top = Math.round(clampNum(winY, DOCK_TOP_INSET, Math.max(DOCK_TOP_INSET, vh - h - DOCK_MIN_LEFT)))
-      return { left, top, w, h, upward, headerY: Math.round(top + (upward ? h - head : 0)) }
+    }
+    // 存下来的相对坐标 -> 像素（窗口大小变了就按比例落回去）
+    function dockFromFractions(saved, viewport) {
+      if (!saved) return null
+      const vw = Math.max(1, Number(viewport && viewport.width) || 0)
+      const vh = Math.max(1, Number(viewport && viewport.height) || 0)
+      return { x: clampNum(Number(saved.fx) || 0, 0, 1) * vw, y: clampNum(Number(saved.fy) || 0, 0, 1) * vh }
     }
     // 召回：标签行那个显眼按钮通过它把进度窗叫回默认位置
     const dockReset = { subs: new Set() }
@@ -571,28 +564,10 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         setCleared((prev) => (prev.length === 0 ? prev : prev.filter((id) => given.some((job) => job.id === id))))
       }, [given])
-      const [pos, setPos] = useState(readDockPos())
+      const [pos, setPos] = useState(() => dockFromFractions(readDockPos(), viewportSize()))
       const [pinned, setPinned] = useState(false)     // 手动唤出：没有任务时也显示
       const [hidden, setHidden] = useState(false)     // 手动收起：连进行中的也先藏起来
       const [open, setOpen] = useState(false)
-      // 收起 / 展开各自量一份真实尺寸：混着用会在展开、收起的那一帧把宽度算错
-      const [sizeClosed, setSizeClosed] = useState({ w: 288, h: 132 })
-      const [sizeOpen, setSizeOpen] = useState({ w: 380, h: 200 })
-      const [headerH, setHeaderH] = useState(34)
-      useEffect(() => {
-        const el = boxRef.current
-        if (!el) return
-        const w = Math.round(el.offsetWidth || 0)
-        const h = Math.round(el.offsetHeight || 0)
-        const current = open ? sizeOpen : sizeClosed
-        if (w > 0 && h > 0 && (w !== current.w || h !== current.h)) {
-          if (open) setSizeOpen({ w, h })
-          else setSizeClosed({ w, h })
-        }
-        const head = headerRef.current
-        const hh = head ? Math.round(head.offsetHeight || 0) : 0
-        if (hh > 0 && hh !== headerH) setHeaderH(hh)
-      })
       const [dockMsg, setDockMsg] = useState("")
       const dragRef = useRef(null)
       const boxRef = useRef(null)
@@ -649,16 +624,12 @@ window.__ModuleLoader__.load({
         const drag = dragRef.current
         if (!drag || !event || typeof event.clientX !== "number") return
         const vp = viewportSize()
-        const frame = dockFrame(vp, pos, open ? sizeOpen : sizeClosed, headerH, open)
-        const w = frame.w
-        const h = frame.h
-        const left = Math.min(Math.max(DOCK_MIN_LEFT, event.clientX - drag.dx), Math.max(DOCK_MIN_LEFT, vp.width - w - DOCK_MIN_LEFT))
-        const top = Math.min(Math.max(DOCK_TOP_INSET, event.clientY - drag.dy), Math.max(DOCK_TOP_INSET, vp.height - h - DOCK_MIN_LEFT))
-        if (Math.abs(left - drag.startX) > 3 || Math.abs(top - drag.startY) > 3) drag.moved = true
-        // 存的是「标题」的像素位置：向上长时窗口顶边在上面，要换算回标题
-        const headerY = frame.upward ? top + h - headerH : top
-        drag.last = { x: Math.round(left), y: Math.round(headerY) }
-        setPos({ fx: Math.max(0, Math.min(1, drag.last.x / vp.width)), fy: Math.max(0, Math.min(1, drag.last.y / vp.height)) })
+        // 就用指针位移 + 起手时的窗口尺寸，别在拖动过程中再引用任何会被自己改掉的布局值
+        const size = { w: drag.width || DOCK_W, h: DOCK_HEAD_H }
+        const next = clampDockPos({ x: event.clientX - drag.dx, y: event.clientY - drag.dy }, vp, size)
+        if (Math.abs(next.x - drag.startX) > 3 || Math.abs(next.y - drag.startY) > 3) drag.moved = true
+        drag.last = next
+        setPos(next)
       }
       const endDrag = () => {
         const drag = dragRef.current
@@ -669,8 +640,7 @@ window.__ModuleLoader__.load({
           return
         }
         // 没拖动就是点了一下标题：展开 / 收起。
-        // 不预算任何尺寸与位置——dockFrame 每次渲染都会按当前视口与量出来的尺寸重算，
-        // 所以「在哪、多高、往上长还是往下长」永远是实时的。
+        // 不预算任何尺寸与位置：点一下只是开/关，位置永远由 pos + clampDockPos 决定，不会跳。
         setOpen(!open)
       }
       // 胶囊抬手：拖过就记住位置，没拖就是「打开」
@@ -691,13 +661,8 @@ window.__ModuleLoader__.load({
         const pillW = 132
         const pillH = 42
         // 胶囊也用相对坐标现算：换窗口大小它跟着走
-        const anchor = pos ? { x: pos.fx * vp.width, y: pos.fy * vp.height } : null
-        const pillPos = anchor
-          ? {
-              left: Math.min(Math.max(4, anchor.x), Math.max(4, vp.width - pillW - 4)) + "px",
-              top: Math.min(Math.max(DOCK_TOP_INSET, anchor.y), Math.max(DOCK_TOP_INSET, vp.height - pillH - 4)) + "px",
-            }
-          : { right: "16px", bottom: "16px" }
+        const pillAt = clampDockPos(pos, vp, { w: pillW, h: pillH })
+        const pillPos = { left: pillAt.x + "px", top: pillAt.y + "px" }
         const summonStyle = {
           position: "fixed",
           zIndex: 70,
@@ -775,16 +740,19 @@ window.__ModuleLoader__.load({
       const finished = jobs.filter((job) => job.status !== "running" && job.status !== "paused")
 
       // 一帧算完全部布局：位置、宽度、高度、向上还是向下，全部来自当前视口 + 量出来的尺寸。
-      const frame = dockFrame(viewportSize(), pos, open ? sizeOpen : sizeClosed, headerH, open)
-      const dockPos = { left: frame.left + "px", top: frame.top + "px" }
+      // 夹边永远只按「标题行 + 固定宽度」算，所以展开不会把窗口顶上去（高度自己缩，位置不动）
+      const vp = viewportSize()
+      const placed = clampDockPos(pos, vp, { w: DOCK_W, h: DOCK_HEAD_H })
+      const dockPos = { left: placed.x + "px", top: placed.y + "px" }
+      const openMaxH = Math.max(160, Math.min(DOCK_OPEN_MAX_H, vp.height - placed.y - DOCK_MARGIN))
       return h("div", {
         ref: boxRef,
         style: {
           position: "fixed",
           zIndex: 70,
           ...dockPos,
-          width: frame.w + "px",
-          maxHeight: open ? frame.h + "px" : "none",
+          width: DOCK_W + "px",
+          maxHeight: open ? openMaxH + "px" : "none",
           overflow: "auto",
           boxSizing: "border-box",
           padding: "10px 12px",
@@ -793,7 +761,7 @@ window.__ModuleLoader__.load({
           background: "var(--dsw-alias-surface-1, rgba(24,26,31,.97))",
           boxShadow: "0 10px 30px rgba(0,0,0,.35)",
           display: "flex",
-          flexDirection: frame.upward ? "column-reverse" : "column",
+          flexDirection: "column",
           gap: "7px",
         },
       },

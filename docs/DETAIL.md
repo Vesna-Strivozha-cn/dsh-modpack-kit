@@ -92,7 +92,7 @@ data/<目录名>/**      插件数据快照（小文本）
 ## 安装顺序与进度窗
 
 - 打包与安装共用任务队列：`POST /pack|/install { async: true }` 立即返回 job，`GET /jobs` 轮询；`/jobs/cancel` 终止（包在内存组装，取消不落盘）、`/jobs/ack` 续跑、`/jobs/dismiss` 删记录、`/jobs/clear` 清收尾。
-- 悬浮进度窗可拖动（位置存 `localStorage`），没任务时收起只留「进度」胶囊；**胶囊本身也可拖动**（位移 >3px 算拖，否则算点开），位置只有一个来源 `pos`（`{x,y}` 左上角），渲染前经纯函数 `dockPlacement(viewport, size, pos)` 夹进视口（`size` 由 `offsetWidth/offsetHeight` 量出，不猜常数）；布局由纯函数 `dockFrame(viewport, pos, boxSize, headerH, open)` 一次算完：`pos` 是相对坐标 `{fx,fy}`（存 localStorage 的也是它，老像素值读入时按视口折算），宽高用 `offsetWidth/offsetHeight` 量（收起 `sizeClosed`、展开 `sizeOpen` 分开量），展开高度 = 当前可用空间夹到 `[DOCK_MIN_OPEN_H=200, DOCK_MAX_OPEN_H=560]`，宽度 = `min(380, vw-24)`；下面不够就 `upward: true`（`column-reverse`，标题压在底部、屏幕上不动）；每帧都按当前视口重算，所以缩放窗口不会错位；窗口缩放时重算；顶部预留 `DOCK_TOP_INSET = 56`，不让窗口停到 DSH 标签行上；标签行「召回进度窗」通过 `requestDockReset()`/`subscribeDockReset()` 清掉 `localStorage` 位置并回到右下角；收尾记录按 `jobKeepSeconds`（默认 0）与心跳（running 超 10 分钟判失败）处理。
+- 悬浮进度窗可拖动（`localStorage` 只存相对坐标 `fx/fy`，界面里一律用像素）；**不做自动判定**：宽度固定 `DOCK_W = 300`、标题行 `DOCK_HEAD_H = 44`、展开上限 `DOCK_OPEN_MAX_H = 420`（按当前位置剩余空间缩，最小 160），点标题只做开/关；唯一与布局相关的函数是 `clampDockPos(pos, viewport, size)`（夹回可见区，默认右下角），拖动时直接用指针位移，不回推相对坐标；标签行「召回进度窗」经 `requestDockReset()`/`subscribeDockReset()` 清掉 `localStorage` 位置并回到右下角；收尾记录按 `jobKeepSeconds`（默认 0）与心跳（running 超 10 分钟判失败）处理。
 - 安装预览：逐插件勾选、有问题的置顶（缺依赖 / 引擎版本不符）、每个带配置的插件可选「包内配置 / 保持本机」、「装后整体启用」、「装后同步市场分组」。
 - 离线安装：勾「离线安装」或探不到 registry 时，只装带本体的插件；只记版本的会逐条说明「联网后再试」。
 

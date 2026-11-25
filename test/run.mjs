@@ -1853,26 +1853,29 @@ test('标签行：刷新按钮和「设置与记录」同一行、排在最右�
   assert(cli.includes('只刷新整合包自己'), '悬浮要写明只刷新整合包自己')
 })
 
-test('进度窗：相对坐标 + 实时测算，任何窗口尺寸都不错位', () => {
+test('进度窗：位置按像素夹边，拖动不再自动判定，展开高度固定', () => {
   const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
-  const pillBlock = cli.slice(cli.indexOf('if (!visible) {'), cli.indexOf('const current = running[0]'))
-  assert(pillBlock.includes('pillRef'), '胶囊要有自己的 ref，才量得出拖动起点')
-  assert(pillBlock.includes('onPointerDown: (event) => startDrag(event, pillRef.current, true)'), '最小化的胶囊也要能拖')
-  assert(pillBlock.includes('const anchor = pos ? { x: pos.fx * vp.width, y: pos.fy * vp.height } : null'), '胶囊也要按相对坐标现算')
+  // 只保留「夹回可见区」这一件事：自动判定向上/向下、自动算高度，全部下线
+  assert(cli.includes('function clampDockPos(pos, viewport, size)'), '位置只做夹边')
+  assert(cli.includes('function dockFromFractions(saved, viewport)'), '换窗口时按相对坐标还原一次')
+  assert(!cli.includes('dockFrame'), '不该再有任何「一帧预算布局」的家伙')
+  assert(!cli.includes('column-reverse'), '不该再有向上展开')
+  assert(!cli.includes('sizeOpen') && !cli.includes('sizeClosed'), '不该再记两套尺寸')
+  assert(cli.includes('const DOCK_W = 300'), '宽度固定，不再按视口收窄')
+  assert(cli.includes('const DOCK_OPEN_MAX_H = 420'), '展开高度固定上限，交给窗内滚动')
+  assert(cli.includes('width: DOCK_W + "px"'), '宽度是常数')
+  assert(cli.includes('const DOCK_HEAD_H = 44'), '夹边只按标题行高度算')
+  assert(cli.includes('const placed = clampDockPos(pos, vp, { w: DOCK_W, h: DOCK_HEAD_H })'), '展开不会把窗口顶上去')
+  assert(cli.includes('const openMaxH = Math.max(160, Math.min(DOCK_OPEN_MAX_H, vp.height - placed.y - DOCK_MARGIN))'), '展开高度按「当前位置往下还剩多少」缩，位置不动')
+  assert(cli.includes('maxHeight: open ? openMaxH + "px" : "none"'), '展开用算出来的可用高度')
+  assert(!cli.includes('const [size, setSize]'), '不再量尺寸（量了就会跟钳位互相打架）')
+  assert(cli.includes('const placed = clampDockPos(pos, vp, { w: DOCK_W, h: DOCK_HEAD_H })') || cli.includes('const placed = clampDockPos(pos, viewportSize(), size)'), '渲染只夹边')
+  assert(cli.includes('const [pos, setPos] = useState(() => dockFromFractions(readDockPos(), viewportSize()))'), '界面里的位置是像素')
+  assert(cli.includes('const next = clampDockPos({ x: event.clientX - drag.dx, y: event.clientY - drag.dy }, vp, size)'), '拖动只用指针位移 + 起手尺寸')
+  assert(!cli.includes('pos.fx * vp.width'), '拖动/渲染都不该再从相对坐标反推像素')
+  assert(cli.includes('const pillAt = clampDockPos(pos, vp, { w: pillW, h: pillH })'), '胶囊也走同一套夹边')
 
-  // 位置只记相对坐标：不再往 localStorage 写像素
-  assert(cli.includes('fx: Math.max(0, Math.min(1, Number(pos.x) / vp.width))'), '存的是 fx（相对坐标）')
-  assert(cli.includes('fy: Math.max(0, Math.min(1, Number(pos.y) / vp.height))'), '存的是 fy（相对坐标）')
-  assert(cli.includes('Number.isFinite(Number(parsed.fx)) && Number.isFinite(Number(parsed.fy))'), '读的时候优先认相对坐标')
-  assert(cli.includes('Number(parsed.x) / vp.width'), '老的像素值要折算成相对坐标')
-
-  // 一帧算完：不存尺寸、不存方向
-  assert(cli.includes('function dockFrame(viewport, pos, boxSize, headerH, open)'), '布局由 dockFrame 一次算完')
-  assert(cli.includes('const frame = dockFrame(viewportSize(), pos, open ? sizeOpen : sizeClosed, headerH, open)'), '渲染直接用实时帧')
-  assert(cli.includes('const [sizeClosed, setSizeClosed]'), '收起态尺寸单独量，别和展开混用')
-  assert(cli.includes('const [sizeOpen, setSizeOpen]'), '展开态尺寸单独量，别和收起混用')
-  // 召回是唯一「和别的东西协作」的入口：它里面调用的每个函数都必须在文件里真有定义，
-  // 否则一按就 ReferenceError，整个面板会被错误边界吞成空白（之前 clearDockPos 就是这么丢的）。
+  // 召回回调里调用的每个函数都必须真有定义，否则一按就 ReferenceError、整块面板被吞成空白
   const recallStart = cli.indexOf('subscribeDockReset(() => {')
   const recallEnd = recallStart < 0 ? -1 : cli.indexOf('}), [])', recallStart)
   assert(recallStart > 0 && recallEnd > recallStart, '召回回调应该在')
@@ -1880,56 +1883,32 @@ test('进度窗：相对坐标 + 实时测算，任何窗口尺寸都不错位',
   const called = [...recallBody.matchAll(/([A-Za-z_$][\w$]*)\s*\(/g)].map((m) => m[1])
   const missing = called.filter((name) => !name.startsWith('set') && !['if', 'for', 'function'].includes(name) && !cli.includes('function ' + name + '('))
   assert(missing.length === 0, '召回回调里调用了没定义的函数：' + missing.join('、'))
-  assert(cli.includes('function clearDockPos()'), '召回要能把存下来的位置清掉')
-  assert(cli.includes('width: frame.w + "px"'), '宽度用实时帧')
-  assert(cli.includes('maxHeight: open ? frame.h + "px" : "none"'), '高度用实时帧')
-  assert(cli.includes('flexDirection: frame.upward ? "column-reverse" : "column"'), '向上长时标题压在最下面')
-  assert(!cli.includes('const [openH, setOpenH]'), '别再记展开高度了，要实时算')
-  assert(!cli.includes('const [upward, setUpward]'), '别再记方向了，要实时算')
-  assert(!cli.includes('dockExpandPlan') && !cli.includes('dockPlacement('), '旧的两套预算函数要清干净')
-  assert(!cli.includes('open ? "380px" : "288px"'), '宽度不许写死')
-  assert(cli.includes('const DOCK_MAX_W = 380'), '展开宽度只做上限，窄窗口按视口收窄')
-  assert(cli.includes('const DOCK_MIN_OPEN_H = 200'), '展开要有最小可用高度')
-  assert(cli.includes('const DOCK_MAX_OPEN_H = 560'), '展开高度要有上限')
 
-  // 纯函数：多种窗口尺寸 + 多种相对位置
+  // 纯函数：四种窗口 × 各种摆放，全都得落在可见区里
   const geoStart = cli.indexOf('const DOCK_TOP_INSET = 56')
   const geoEnd = cli.indexOf('// 召回：标签行那个显眼按钮')
   assert(geoStart > 0 && geoEnd > geoStart, '几何函数要能单独取出来测')
-  const geo = new Function(cli.slice(geoStart, geoEnd) + '\nreturn { dockFrame, DOCK_MARGIN, DOCK_TOP_INSET };')()
-  const { dockFrame, DOCK_MARGIN, DOCK_TOP_INSET } = geo
-  const boxSize = { w: 288, h: 132 }
-  const headerH = 34
-  for (const viewport of [{ width: 1920, height: 1080 }, { width: 1280, height: 800 }, { width: 800, height: 600 }, { width: 420, height: 520 }, { width: 360, height: 480 }]) {
-    const vw = viewport.width
-    const vh = viewport.height
-    // 收起态：不管相对坐标给多离谱，都要落在视口里
-    for (const pos of [null, { fx: 0, fy: 0 }, { fx: 0.5, fy: 0.5 }, { fx: 1, fy: 1 }, { fx: 0.98, fy: 0.99 }]) {
-      const f = dockFrame(viewport, pos, boxSize, headerH, false)
-      assert(f.left >= 4 && f.left + f.w <= vw - 4 + 1, vw + 'x' + vh + ' 收起态 left 越界：' + JSON.stringify(f))
-      assert(f.top >= DOCK_TOP_INSET && f.top + f.h <= vh - 4 + 1, vw + 'x' + vh + ' 收起态 top 越界：' + JSON.stringify(f))
-      assert(f.upward === false, '收起态不该标成向上长')
-      assert(f.w === boxSize.w && f.h === boxSize.h, '收起态就用量出来的尺寸')
+  const geo = new Function(cli.slice(geoStart, geoEnd) + '\nreturn { clampDockPos, dockFromFractions, DOCK_W, DOCK_OPEN_MAX_H, DOCK_TOP_INSET, DOCK_MARGIN };')()
+  const { clampDockPos, dockFromFractions, DOCK_W, DOCK_TOP_INSET } = geo
+  const viewports = [[1920, 1080], [1280, 800], [800, 600], [420, 520]]
+  for (const [vw, vh] of viewports) {
+    const viewport = { width: vw, height: vh }
+    const openSize = { w: DOCK_W, h: 420 }
+    // 没有位置时落右下角
+    const fallback = clampDockPos(null, viewport, { w: DOCK_W, h: 44 })
+    assert(fallback.x === vw - DOCK_W - 12 && fallback.y === vh - 44 - 12, vw + 'x' + vh + ' 默认位置该在右下角：' + JSON.stringify(fallback))
+    for (const pos of [{ x: -999, y: -999 }, { x: 99999, y: 99999 }, { x: 40, y: 40 }, { x: vw / 2, y: vh / 2 }]) {
+      for (const size of [{ w: DOCK_W, h: 44 }, openSize]) {
+        const at = clampDockPos(pos, viewport, size)
+        assert(at.x >= 4 && at.x <= Math.max(4, vw - size.w - 4), '横向出界了：' + vw + 'x' + vh + ' ' + JSON.stringify(pos) + ' -> ' + JSON.stringify(at))
+        assert(at.y >= DOCK_TOP_INSET && at.y <= Math.max(DOCK_TOP_INSET, vh - size.h - 4), '纵向出界了：' + vw + 'x' + vh + ' ' + JSON.stringify(pos) + ' -> ' + JSON.stringify(at))
+      }
     }
-    // 展开态：靠上向下长、靠底向上长，两种都不许出屏
-    const top = dockFrame(viewport, { fx: 0.2, fy: 0 }, boxSize, headerH, true)
-    assert(top.upward === false, vw + 'x' + vh + ' 靠上应该向下长：' + JSON.stringify(top))
-    assert(top.top === DOCK_TOP_INSET, vw + 'x' + vh + ' 靠上时顶边应贴着安全线：' + JSON.stringify(top))
-    assert(top.h >= 200 && top.top + top.h <= vh - 4 + 1, vw + 'x' + vh + ' 向下长不许出屏：' + JSON.stringify(top))
-    const bottom = dockFrame(viewport, { fx: 0.2, fy: 1 }, boxSize, headerH, true)
-    assert(bottom.upward === true, vw + 'x' + vh + ' 靠底应该向上长：' + JSON.stringify(bottom))
-    assert(bottom.h >= 200 && bottom.h <= 560, vw + 'x' + vh + ' 向上长的高度要在 200~560：' + JSON.stringify(bottom))
-    assert(bottom.top >= DOCK_TOP_INSET && bottom.top + bottom.h <= vh - 4 + 1, vw + 'x' + vh + ' 向上长不许出屏：' + JSON.stringify(bottom))
-    // 标题在屏幕上的位置：靠底向上长时不该往下跑（允许被夹边推一点）
-    assert(bottom.headerY <= vh - 4 && bottom.headerY >= vh - headerH - 6, vw + 'x' + vh + ' 靠底时标题应该留在底部且完整在屏内：' + JSON.stringify(bottom))
-    // 展开宽度：只做上限，窄窗口按视口收窄
-    assert(top.w === Math.round(Math.min(380, vw - DOCK_MARGIN * 2)), vw + '宽时展开宽度算错：' + top.w)
-    assert(top.w <= vw - 4, '展开宽度不许超过视口')
+    // 同一相对坐标在更大视口里要跟着往外走
+    const small = dockFromFractions({ fx: 0.5, fy: 0.5 }, { width: 800, height: 600 })
+    const big = dockFromFractions({ fx: 0.5, fy: 0.5 }, { width: 1600, height: 1000 })
+    assert(small.x === 400 && small.y === 300 && big.x === 800 && big.y === 500, '相对坐标要按比例还原')
   }
-  // 同一个相对坐标，换窗口大小后跟着走（这就是「相对坐标实时测算」的意义）
-  const a = dockFrame({ width: 1280, height: 800 }, { fx: 0.5, fy: 0.5 }, boxSize, headerH, false)
-  const b = dockFrame({ width: 1920, height: 1080 }, { fx: 0.5, fy: 0.5 }, boxSize, headerH, false)
-  assert(b.left > a.left && b.top > a.top, '视口变大时同一相对坐标要按比例外移：' + JSON.stringify([a, b]))
 })
 test('解除卡顿：本机装了 dsh-unlag 才出按钮，悬浮写明来源', () => {
   const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
