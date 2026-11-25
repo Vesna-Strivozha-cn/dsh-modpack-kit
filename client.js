@@ -2039,23 +2039,28 @@ window.__ModuleLoader__.load({
       }
       const [refreshing, setRefreshing] = useState(false)
       const [refreshedAt, setRefreshedAt] = useState(0)
+      const [refreshMsg, setRefreshMsg] = useState("")
       const doRefresh = async () => {
         if (refreshing) return
         setRefreshing(true)
+        setRefreshMsg("")
         try {
           if (typeof props.onRefresh === "function") await props.onRefresh()
           setRefreshedAt(Date.now())
+        } catch (e) {
+          setRefreshMsg("刷新失败：" + String((e && e.message) || e))
         } finally {
           setRefreshing(false)
         }
       }
+      const gen = props.gen || 0
       const refreshBtn = h("button", {
         type: "button",
         style: chipBtn,
         disabled: refreshing,
         title: "重新读取 DSH 状态：插件、市场目录与进度窗都拉一遍",
         onClick: doRefresh,
-      }, refreshing ? "刷新中…" : (refreshedAt ? "刷新 ✓" : "刷新"))
+      }, refreshing ? "刷新中…" : (refreshMsg ? "刷新失败" : refreshedAt ? "刷新 ✓" : "刷新"))
       const tabs = [
         ["pack", "打包"],
         ["install", "安装 / 导入"],
@@ -2075,9 +2080,9 @@ window.__ModuleLoader__.load({
       }, text)
 
       const panels = [
-        tab === "pack" ? h(PackPanel, { status, jobs, result: packResult, setResult: savePackResult, focus }) : null,
-        tab === "install" ? h(InstallPanel, { status }) : null,
-        tab === "settings" ? h(SettingsPanel, { status }) : null,
+        tab === "pack" ? h(PackPanel, { key: "pack-" + gen, status, jobs, result: packResult, setResult: savePackResult, focus }) : null,
+        tab === "install" ? h(InstallPanel, { key: "install-" + gen, status }) : null,
+        tab === "settings" ? h(SettingsPanel, { key: "settings-" + gen, status }) : null,
       ]
       const footNote = h("div", { style: hint }, "说明：整合包只打包你选择的插件与必要配置。打包与安装安全检测在内存中进行，命中原文不落盘；请遵守插件作者许可证与你所在地区的法律法规。")
       const unlagNode = unlag
@@ -2111,7 +2116,7 @@ window.__ModuleLoader__.load({
           },
         },
           h("div", { style: { maxWidth: "1020px", margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: "10px" } },
-            h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine, refreshBtn),
+            h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine, refreshMsg ? h("span", { style: { ...hint, color: "#ff6b6b" } }, refreshMsg) : null, refreshBtn),
           unlagNode,
             unlagNode,
             panels,
@@ -2128,7 +2133,7 @@ window.__ModuleLoader__.load({
           h("div", { style: { display: "flex", alignItems: "baseline", gap: "10px", flexWrap: "wrap" } },
             h("h2", { style: { margin: 0, fontSize: "20px", fontWeight: 600 } }, "整合包"),
             h("span", { style: hint }, ((status && status.config && status.config.tagline) || "谁说 dsh 不能整整合包呢？（你说这几个插件整一块不牛逼坏了）"))),
-          h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine, refreshBtn),
+          h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine, refreshMsg ? h("span", { style: { ...hint, color: "#ff6b6b" } }, refreshMsg) : null, refreshBtn),
           panels,
           footNote,
           h(RepoFooter, null)),
@@ -2148,6 +2153,7 @@ window.__ModuleLoader__.load({
       const [status, setStatus] = useState(null)
       const [error, setError] = useState("")
       const [tries, setTries] = useState(0)
+      const [gen, setGen] = useState(0)
       const alive = useRef(true)
       useEffect(() => () => { alive.current = false }, [])
       // 宿主刚起来、会话还在建的时候，第一次可能拿不到状态（401/网络没就绪）。
@@ -2184,7 +2190,18 @@ window.__ModuleLoader__.load({
         return h("div", { style: { padding: "20px 24px", color: "var(--dsw-alias-label-tertiary, #8b909b)", fontSize: "13px" } },
           tries > 0 ? "整合包：还在连 DSH 本体…（自动重试 " + tries + " 次）" : "整合包：读取环境…")
       }
-      return h(Home, { status, surface: (props && props.surface) || "sidebar", onRefresh: () => load(3) })
+      // 手动刷新：先重读 status，再把下面几个面板整体重挂一次（gen+1）。
+      // 只重读 status 是不够的：面板里的插件清单、市场信息、目录分页都是挂载时拉一次，
+      // 不重挂就不会重新取，看起来就像「按了没反应」。
+      return h(Home, {
+        status,
+        surface: (props && props.surface) || "sidebar",
+        gen,
+        onRefresh: async () => {
+          await load(3)
+          setGen((n) => n + 1)
+        },
+      })
     }
 
     const inject = ["slots"]

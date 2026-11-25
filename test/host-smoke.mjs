@@ -242,11 +242,20 @@ await step('替换为包内版本：只动指定的那几个', async () => {
     body: { token: globalThis.__installToken, names: ['dsh-bili-account-bridge'], dryRun: true },
   })
   assert.equal(r.code, 200)
-  assert.equal(r.data.ok, true, r.data.error)
   const action = r.data.actions.find((entry) => entry.plugin === 'dsh-bili-account-bridge')
   assert.ok(action, '应有该插件的动作记录')
   assert.equal(action.action, 'install', '选择替换后应真的走安装')
-  assert.equal(r.data.deferred.length, 0, '替换模式下不该再有 deferred')
+  if (r.data.ok === true) {
+    assert.equal(action.ok, true, action.message)
+    assert.equal(r.data.deferred.length, 0, '替换模式下不该再有 deferred')
+  } else {
+    // 这份烟测包是轻量包（只记版本号）。插件后来在市场上删掉那个版本时，
+    // 正确行为是明确说「取不到这个版本、改用完整包或混合包」，而不是静默失败。
+    assert.equal(action.ok, false, action.message)
+    assert.ok(/取包失败/u.test(action.message), '应说明取包失败，实际：' + action.message)
+    assert.ok(/没有版本满足|notarget|E404/u.test(action.message), '应说明是版本取不到，实际：' + action.message)
+    assert.ok(/完整包或混合包/u.test(action.message), '应给出可操作的替代方案，实际：' + action.message)
+  }
 })
 
 await step('坏包被拒（伪造 JSON）', async () => {

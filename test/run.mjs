@@ -749,12 +749,14 @@ await testAsync('客户端组件在假 React 下能渲染（抓未定义变量�
   new Function('window', 'document', source)(win, doc)
   assert(mod && typeof mod.Home === 'function', 'client.js 应导出 Home')
 
+  const seen = []
   const render = (node, depth = 0) => {
     if (depth > 400) throw new Error('渲染深度超限（可能组件互相递归）')
     if (node === null || node === undefined || typeof node === 'boolean') return
     if (typeof node === 'string' || typeof node === 'number') return
     if (Array.isArray(node)) { for (const child of node) render(child, depth + 1); return }
     if (!node.el) return
+    seen.push(node)
     if (typeof node.type === 'function') {
       render(node.type({ ...node.props, children: node.children.length === 1 ? node.children[0] : node.children }), depth + 1)
       return
@@ -782,6 +784,15 @@ await testAsync('客户端组件在假 React 下能渲染（抓未定义变量�
     groupSource: 'market',
   }
   render(mod.Home({ status }))
+  // 刷新按钮：不是「摆着好看」，必须真的把重读回调调起来。
+  let refreshCalls = 0
+  const withRefresh = mod.Home({ status, gen: 0, onRefresh: async () => { refreshCalls += 1 } })
+  render(withRefresh)
+  const refreshButtons = seen.filter((n) => n.type === "button" && typeof n.props.title === "string" && n.props.title.indexOf("重新读取 DSH 状态") === 0)
+  const refreshBtnNode = refreshButtons[refreshButtons.length - 1] // 取最后一次渲染的那个（带着 onRefresh）
+  assert(Boolean(refreshBtnNode), "标签行里要有刷新按钮")
+  await refreshBtnNode.props.onClick()
+  assert(refreshCalls === 1, "点刷新应真的重新读一遍状态")
   render(mod.Home({ status: grouped }))
   render(mod.Icon({ size: 16 }))
   render(mod.Page({}))
@@ -1784,6 +1795,12 @@ test('请求体解析只有一处：路由统一用 readJsonBody，别再手写 
   assert(http.includes('export const readJsonBody = async (req, fallback = {}, limit = MAX_JSON_BODY) =>'), '助手要能带体积上限（drop 路由用 256 MB）')
 })
 
+test('轻量包取不到版本时要给出替代方案（不是干巴巴报错）', () => {
+  const src = fs.readFileSync(new URL('../lib/install.mjs', import.meta.url), 'utf8')
+  assert(src.includes('轻量包只记版本号，市场上没有这个版本时就装不回来'), '要解释为什么装不回来')
+  assert(src.includes('完整包或混合包'), '要给出可操作的替代方案')
+  assert(src.includes('/没有版本满足|notarget|E404/u.test(why)'), '只在这类「取不到版本」的错误上加建议')
+})
 test('AI 搜索：借用插件市场新接口，旧版市场自动退回关键词', () => {
   const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   assert(cli.includes('"/dsh-market/ai-search"'), '要走插件市场的 AI 搜索接口，而不是自己再实现一遍模型调用')
@@ -1818,10 +1835,14 @@ test('插件市场：设置里能强制关掉它在侧栏里的那一行，悬�
 
 test('标签行：刷新按钮和「设置与记录」同一行、排在最右边', () => {
   const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
-  assert(cli.includes('onRefresh: () => load(3)'), 'Page 要把重新读状态的能力传下去')
-  assert(cli.includes('tabs.map(([key, text]) => tabBtn(key, text)), envLine, refreshBtn'), '刷新按钮要排在标签行末尾')
+  assert(cli.includes('await load(3)'), 'Page 要把重新读状态的能力传下去')
+  assert(cli.includes('envLine, refreshMsg ? h("span"'), '刷新失败原因要显示在标签行里')
+  assert(cli.includes('refreshBtn)'), '刷新按钮要排在标签行末尾')
   assert(cli.includes('refreshing ? "刷新中…"'), '刷新中要有反馈')
   assert(cli.includes('重新读取 DSH 状态'), '悬浮要说明刷新做了什么')
+  assert(cli.includes('setGen((n) => n + 1)'), '刷新后要让面板重挂，否则看起来像没反应')
+  assert(cli.includes('key: "pack-" + gen'), '面板要用 gen 当 key')
+  assert(cli.includes('刷新失败：'), '刷新失败要给出原因')
 })
 
 test('解除卡顿：本机装了 dsh-unlag 才出按钮，悬浮写明来源', () => {
