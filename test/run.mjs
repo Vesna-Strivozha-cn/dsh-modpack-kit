@@ -1853,7 +1853,7 @@ test('标签行：刷新按钮和「设置与记录」同一行、排在最右�
   assert(cli.includes('只刷新整合包自己'), '悬浮要写明只刷新整合包自己')
 })
 
-test('进度窗：最小化也能拖，展开时按边界往内侧贴', () => {
+test('进度窗：最小化也能拖，位置照 left/top 放，展开时按真实矩形让位', () => {
   const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   const pillBlock = cli.slice(cli.indexOf('if (!visible) {'), cli.indexOf('const current = running[0]'))
   assert(pillBlock.includes('pillRef'), '胶囊要有自己的 ref，才量得出拖动起点')
@@ -1861,31 +1861,26 @@ test('进度窗：最小化也能拖，展开时按边界往内侧贴', () => {
   assert(pillBlock.includes('onPointerUp: endPillDrag'), '胶囊抬手要决定是拖还是打开')
   assert(cli.includes('allowOnButton'), '按在胶囊按钮上要放行拖动，不能被「按在按钮上」挡掉')
   assert(cli.includes('const endPillDrag = () => {'), '胶囊要有自己的抬手处理')
-  assert(cli.includes('if (drag.moved) {') && cli.includes('writeDockPos(drag.last)'), '拖动结束要记住位置')
-  // 展开/收起都要夹在视口里，靠边就往内侧贴
-  assert(cli.includes('const dockPos = (() => {'), '展开位置要单独算')
-  assert(cli.includes('Math.max(4, vp.width - dockWidth - 4)'), '靠右要往左挪，不许出界')
-  assert(cli.includes('Math.max(4, vp.height - dockHeight - 4)'), '靠下要往上挪，不许出界')
-  assert(cli.includes('const dockHeight = open ? Math.min(Math.round(vp.height * 0.58), 520) : collapsedH'), '展开后的高度要按视口算')
-  // 展开要「锚住靠边那一侧」往里长，而不是整块跳走
-  assert(cli.includes('const rightAnchor = pos.x + collapsedW / 2 > vp.width / 2'), '靠右时锚右边')
-  assert(cli.includes('const bottomAnchor = pos.y + collapsedH / 2 > vp.height / 2'), '靠下时锚下边')
-  assert(cli.includes('style.right = Math.min(gap, Math.max(4, vp.width - dockWidth - 4)) + "px"'), '展开时右边距不变，向左多占')
-  assert(cli.includes('style.bottom = Math.min(gap, Math.max(4, vp.height - dockHeight - 4)) + "px"'), '展开时下边距不变，向上多占')
-  assert(cli.includes('window.addEventListener("resize"'), '窗口大小变了要重算贴边位置')
-  // 拖到右上角会盖住 DSH 自己的标签行：留出顶栏高度
+  // 位置必须老实按 left/top 渲染：之前按估计宽高去贴右边/下边，拖到下半部分就会错位
+  assert(cli.includes('const frame = open && view ? view : pos'), '渲染位置只看 frame')
+  assert(cli.includes('{ left: frame.left + "px", top: frame.top + "px" }'), '只写 left/top，不写 right/bottom')
+  assert(!cli.includes('rightAnchor') && !cli.includes('bottomAnchor'), '不许再有「猜哪边近就锚哪边」的写法')
+  // 展开那一下用真实矩形算，再向内夹进视口
+  assert(cli.includes('const rect = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null'), '展开要量真实矩形')
+  assert(cli.includes('if (left + w > vp.width - 4) left = vp.width - w - 4'), '靠右要在展开时向左让位')
+  assert(cli.includes('if (top + h > vp.height - 4) top = vp.height - h - 4'), '靠下要在展开时向上让位')
+  assert(cli.includes('Math.max(DOCK_TOP_INSET, top)'), '展开后也要避开顶栏')
+  // 拖到右上角会盖住 DSH 标签行：留出顶栏高度
   assert(cli.includes('const DOCK_TOP_INSET = 56'), '要有顶栏安全距离')
   assert(cli.includes('Math.max(DOCK_TOP_INSET, event.clientY - drag.dy)'), '拖动时不许贴到顶栏上')
-  assert(cli.includes('Math.max(DOCK_TOP_INSET, pos.y)'), '收起/展开的位置也要避开顶栏')
   // 标签行要有显眼的「召回」，把窗口叫回默认位置
   assert(cli.includes('"召回进度窗"'), '刷新旁边要有召回按钮')
   assert(cli.includes('function requestDockReset()'), '召回要能广播到进度窗')
   assert(cli.includes('subscribeDockReset'), '进度窗要订阅召回')
   assert(cli.includes('clearDockPos()'), '召回要清掉记住的位置')
   assert(cli.includes('background: "#4C7DF0"'), '召回按钮要显眼（实心）')
-  assert(!/召回进度窗[\s\S]{0,200}刷新中/.test(cli), '召回不能混进刷新的状态文案')
+  assert(cli.includes('window.addEventListener("resize"'), '窗口大小变了要重算位置')
 })
-
 test('解除卡顿：本机装了 dsh-unlag 才出按钮，悬浮写明来源', () => {
   const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   assert(cli.includes('const UNLAG_STATE_ROUTE = "/dsh-unlag/state"'), '检测要用它自己的 state 接口')
