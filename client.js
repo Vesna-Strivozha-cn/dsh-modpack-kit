@@ -495,6 +495,40 @@ window.__ModuleLoader__.load({
     }
     // DSH 顶栏 / 标签行大约占这么高：窗口别停在那上面，否则会盖住界面的按钮
     const DOCK_TOP_INSET = 56
+    const DOCK_MARGIN = 12            // 离视口边缘至少留这么宽
+    const DOCK_MIN_LEFT = 4
+    const clampNum = (value, min, max) => Math.max(min, Math.min(value, max))
+    // 把「左上角坐标」夹进视口：窗口有多大就留多大，绝不让它有一半在外面。
+    // 纯函数，参数全是数字，测试里可以直接跑多种窗口尺寸。
+    function dockPlacement(viewport, size, pos) {
+      if (!pos) return null
+      const vw = Math.max(1, Number(viewport.width) || 0)
+      const vh = Math.max(1, Number(viewport.height) || 0)
+      const w = Math.max(1, Number(size.w) || 1)
+      const h = Math.max(1, Number(size.h) || 1)
+      const maxLeft = Math.max(DOCK_MIN_LEFT, vw - w - DOCK_MIN_LEFT)
+      const maxTop = Math.max(DOCK_TOP_INSET, vh - h - DOCK_MIN_LEFT)
+      return {
+        left: Math.round(clampNum(pos.x, DOCK_MIN_LEFT, maxLeft)),
+        top: Math.round(clampNum(pos.y, DOCK_TOP_INSET, maxTop)),
+      }
+    }
+    // 展开时贴到「离它最近的那个角」：靠右就贴右、靠下就贴下，靠左/上就保持原位往里让。
+    // 用真实矩形判断，不猜宽高，所以换成小窗口也不会算歪。
+    function dockExpandedPos(viewport, rect, openSize) {
+      const vw = Math.max(1, Number(viewport.width) || 0)
+      const vh = Math.max(1, Number(viewport.height) || 0)
+      const w = Math.max(1, Number(openSize.w) || 1)
+      const h = Math.max(1, Number(openSize.h) || 1)
+      const rightHalf = rect.left + rect.width / 2 > vw / 2
+      const bottomHalf = rect.top + rect.height / 2 > vh / 2
+      const left = rightHalf ? vw - w - DOCK_MARGIN : Math.min(rect.left, vw - w - DOCK_MIN_LEFT)
+      const top = bottomHalf ? vh - h - DOCK_MARGIN : Math.min(rect.top, vh - h - DOCK_MIN_LEFT)
+      return {
+        x: Math.round(clampNum(left, DOCK_MIN_LEFT, Math.max(DOCK_MIN_LEFT, vw - w - DOCK_MIN_LEFT))),
+        y: Math.round(clampNum(top, DOCK_TOP_INSET, Math.max(DOCK_TOP_INSET, vh - h - DOCK_MIN_LEFT))),
+      }
+    }
     // 召回：标签行那个显眼按钮通过它把进度窗叫回默认位置
     const dockReset = { subs: new Set() }
     function requestDockReset() {
@@ -522,8 +556,15 @@ window.__ModuleLoader__.load({
       const [pinned, setPinned] = useState(false)     // 手动唤出：没有任务时也显示
       const [hidden, setHidden] = useState(false)     // 手动收起：连进行中的也先藏起来
       const [open, setOpen] = useState(false)
-      // 展开时用的显示坐标：拿拖动后的真实矩形算一次，避免用估计高度去锚下边导致错位
-      const [view, setView] = useState(null)
+      // 量出来的真实尺寸：拖动夹边、展开贴角都用它，绝不猜 132/288 这种数
+      const [boxSize, setBoxSize] = useState({ w: 288, h: 132 })
+      useEffect(() => {
+        const el = boxRef.current
+        if (!el) return
+        const w = Math.round(el.offsetWidth || 0)
+        const h = Math.round(el.offsetHeight || 0)
+        if (w > 0 && h > 0 && (w !== boxSize.w || h !== boxSize.h)) setBoxSize({ w, h })
+      })
       const [dockMsg, setDockMsg] = useState("")
       const dragRef = useRef(null)
       const boxRef = useRef(null)
@@ -576,13 +617,14 @@ window.__ModuleLoader__.load({
       const moveDrag = (event) => {
         const drag = dragRef.current
         if (!drag || !event || typeof event.clientX !== "number") return
-        const { width, height } = viewportSize()
-        const left = Math.min(Math.max(4, event.clientX - drag.dx), Math.max(4, width - drag.width - 4))
-        const top = Math.min(Math.max(DOCK_TOP_INSET, event.clientY - drag.dy), Math.max(DOCK_TOP_INSET, height - drag.height - 4))
+        const vp = viewportSize()
+        const w = drag.width || boxSize.w
+        const h = drag.height || boxSize.h
+        const left = Math.min(Math.max(DOCK_MIN_LEFT, event.clientX - drag.dx), Math.max(DOCK_MIN_LEFT, vp.width - w - DOCK_MIN_LEFT))
+        const top = Math.min(Math.max(DOCK_TOP_INSET, event.clientY - drag.dy), Math.max(DOCK_TOP_INSET, vp.height - h - DOCK_MIN_LEFT))
         if (Math.abs(left - drag.startX) > 3 || Math.abs(top - drag.startY) > 3) drag.moved = true
         drag.last = { x: Math.round(left), y: Math.round(top) }
         setPos(drag.last)
-        if (open) setView({ left: drag.last.x, top: drag.last.y })
       }
       const endDrag = () => {
         const drag = dragRef.current
@@ -594,23 +636,19 @@ window.__ModuleLoader__.load({
         }
         // 没拖动就是点了一下标题：展开 / 收起
         if (open) {
-          setView(null)
           setOpen(false)
-        } else {
-          const el = boxRef.current
-          const rect = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null
-          const vp = viewportSize()
-          const w = 380
-          const h = Math.min(Math.round(vp.height * 0.58), 520)
-          let left = rect ? rect.left : (pos ? pos.x : vp.width - 288 - 16)
-          let top = rect ? rect.top : (pos ? pos.y : vp.height - 132 - 16)
-          if (left + w > vp.width - 4) left = vp.width - w - 4
-          if (top + h > vp.height - 4) top = vp.height - h - 4
-          left = Math.max(4, left)
-          top = Math.max(DOCK_TOP_INSET, top)
-          setView({ left: Math.round(left), top: Math.round(top) })
-          setOpen(true)
+          return
         }
+        const el = boxRef.current
+        const rect = el && el.getBoundingClientRect
+          ? el.getBoundingClientRect()
+          : { left: pos ? pos.x : 0, top: pos ? pos.y : 0, width: boxSize.w, height: boxSize.h }
+        const vp = viewportSize()
+        const openSize = { w: 380, h: Math.min(Math.round(vp.height * 0.6), 560) }
+        const next = dockExpandedPos(vp, rect, openSize)
+        setPos(next)
+        writeDockPos(next)
+        setOpen(true)
       }
       // 胶囊抬手：拖过就记住位置，没拖就是「打开」
       const endPillDrag = () => {
@@ -714,11 +752,11 @@ window.__ModuleLoader__.load({
 
       // 位置一律用 left/top 渲染：拖动存的就是左上角，渲染也照它放，绝不拿估计的宽高去贴右边/下边（那正是「拖到下半部分错位」的来源）。
       // 展开需要的向内让位在展开那一下按真实矩形算进 view，之后跟手走。
-      // 注意两种形状：pos 存的是 { x, y }（拖动合同时的格式），view 是 { left, top }，这里先归一化再渲染
-      const frame = open && view ? view : (pos ? { left: pos.x, top: pos.y } : null)
-      const dockPos = frame
-        ? { left: frame.left + "px", top: frame.top + "px" }
-        : { right: "16px", bottom: "16px" }
+      // 位置只有一处来源：pos（左上角，{x,y}）。渲染前统一夹进视口，窗口多大就留多大。
+      const placed = dockPlacement(viewportSize(), boxSize, pos)
+      const dockPos = placed
+        ? { left: placed.left + "px", top: placed.top + "px" }
+        : { right: DOCK_MARGIN + "px", bottom: DOCK_MARGIN + "px" }
       return h("div", {
         ref: boxRef,
         style: {

@@ -1853,7 +1853,7 @@ test('标签行：刷新按钮和「设置与记录」同一行、排在最右�
   assert(cli.includes('只刷新整合包自己'), '悬浮要写明只刷新整合包自己')
 })
 
-test('进度窗：最小化也能拖，位置照 left/top 放，展开时按真实矩形让位', () => {
+test('进度窗：位置只有 pos 一处来源，任何窗口尺寸都夹在视口里', () => {
   const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   const pillBlock = cli.slice(cli.indexOf('if (!visible) {'), cli.indexOf('const current = running[0]'))
   assert(pillBlock.includes('pillRef'), '胶囊要有自己的 ref，才量得出拖动起点')
@@ -1861,26 +1861,56 @@ test('进度窗：最小化也能拖，位置照 left/top 放，展开时按真�
   assert(pillBlock.includes('onPointerUp: endPillDrag'), '胶囊抬手要决定是拖还是打开')
   assert(cli.includes('allowOnButton'), '按在胶囊按钮上要放行拖动，不能被「按在按钮上」挡掉')
   assert(cli.includes('const endPillDrag = () => {'), '胶囊要有自己的抬手处理')
-  // 位置必须老实按 left/top 渲染：之前按估计宽高去贴右边/下边，拖到下半部分就会错位
-  assert(cli.includes('const frame = open && view ? view : (pos ? { left: pos.x, top: pos.y } : null)'), '渲染位置只看 frame（pos 是 x/y，view 是 left/top，必须归一化）')
-  assert(cli.includes('left: frame.left + "px"'), '归一化后按 left 渲染，不能再出现 undefinedpx')
-  assert(cli.includes('{ left: frame.left + "px", top: frame.top + "px" }'), '只写 left/top，不写 right/bottom')
+  // 位置：只有一处来源 pos，渲染前统一夹进视口
+  assert(cli.includes('const placed = dockPlacement(viewportSize(), boxSize, pos)'), '渲染位置必须来自 dockPlacement')
+  assert(cli.includes('left: placed.left + "px"'), '按夹过的 left 渲染')
+  assert(cli.includes('top: placed.top + "px"'), '按夹过的 top 渲染')
   assert(!cli.includes('rightAnchor') && !cli.includes('bottomAnchor'), '不许再有「猜哪边近就锚哪边」的写法')
-  // 展开那一下用真实矩形算，再向内夹进视口
-  assert(cli.includes('const rect = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null'), '展开要量真实矩形')
-  assert(cli.includes('if (left + w > vp.width - 4) left = vp.width - w - 4'), '靠右要在展开时向左让位')
-  assert(cli.includes('if (top + h > vp.height - 4) top = vp.height - h - 4'), '靠下要在展开时向上让位')
-  assert(cli.includes('Math.max(DOCK_TOP_INSET, top)'), '展开后也要避开顶栏')
-  // 拖到右上角会盖住 DSH 标签行：留出顶栏高度
-  assert(cli.includes('const DOCK_TOP_INSET = 56'), '要有顶栏安全距离')
+  assert(!cli.includes('frame.left'), '不许再出现 frame.left 这种把 x/y 当 left/top 的写法')
+  // 尺寸靠量：不猜 288/132
+  assert(cli.includes('const [boxSize, setBoxSize] = useState({ w: 288, h: 132 })'), '要记一份真实尺寸')
+  assert(cli.includes('el.offsetWidth') && cli.includes('el.offsetHeight'), '尺寸要量出来')
+  assert(cli.includes('const rect = el && el.getBoundingClientRect'), '展开要量真实矩形')
+  assert(cli.includes('const next = dockExpandedPos(vp, rect, openSize)'), '展开位置由纯函数算')
+  assert(cli.includes('writeDockPos(next)'), '展开后的位置要存下来，收起时不能跳回去')
   assert(cli.includes('Math.max(DOCK_TOP_INSET, event.clientY - drag.dy)'), '拖动时不许贴到顶栏上')
-  // 标签行要有显眼的「召回」，把窗口叫回默认位置
   assert(cli.includes('"召回进度窗"'), '刷新旁边要有召回按钮')
   assert(cli.includes('function requestDockReset()'), '召回要能广播到进度窗')
   assert(cli.includes('subscribeDockReset'), '进度窗要订阅召回')
   assert(cli.includes('clearDockPos()'), '召回要清掉记住的位置')
   assert(cli.includes('background: "#4C7DF0"'), '召回按钮要显眼（实心）')
   assert(cli.includes('window.addEventListener("resize"'), '窗口大小变了要重算位置')
+
+  // 纯函数跑多种窗口尺寸：全屏、笔记本、非全屏小窗、极窄窗
+  const geoStart = cli.indexOf('const DOCK_TOP_INSET = 56')
+  const geoEnd = cli.indexOf('// 召回：标签行那个显眼按钮')
+  assert(geoStart > 0 && geoEnd > geoStart, '几何函数要能被单独取出来测')
+  const geo = new Function(cli.slice(geoStart, geoEnd) + '\nreturn { dockPlacement, dockExpandedPos };')()
+  const size = { w: 288, h: 132 }
+  for (const viewport of [{ width: 1920, height: 1080 }, { width: 1280, height: 800 }, { width: 800, height: 600 }, { width: 420, height: 520 }]) {
+    const vw = viewport.width
+    const vh = viewport.height
+    const maxLeft = Math.max(4, vw - size.w - 4)
+    const maxTop = Math.max(56, vh - size.h - 4)
+    for (const pos of [{ x: -500, y: -500 }, { x: 0, y: 0 }, { x: vw / 2, y: vh / 2 }, { x: 99999, y: 99999 }, { x: vw - 40, y: vh - 40 }]) {
+      const out = geo.dockPlacement(viewport, size, pos)
+      assert(out.left >= 4 && out.left <= maxLeft, vw + 'x' + vh + ' 的 left 越界：' + JSON.stringify(out))
+      assert(out.top >= 56 && out.top <= maxTop, vw + 'x' + vh + ' 的 top 越界：' + JSON.stringify(out))
+    }
+    const corner = geo.dockPlacement(viewport, size, { x: 99999, y: 99999 })
+    assert(corner.left === maxLeft && corner.top === maxTop, vw + 'x' + vh + ' 拖到右下角应贴边')
+    // 展开：靠右下角时贴右下边距 12；靠左上时保持原位
+    const openSize = { w: 380, h: Math.min(Math.round(vh * 0.6), 560) }
+    const rectBR = { left: maxLeft, top: maxTop, width: size.w, height: size.h }
+    const outBR = geo.dockExpandedPos(viewport, rectBR, openSize)
+    assert(outBR.x === Math.max(4, vw - openSize.w - 12), vw + 'x' + vh + ' 展开应贴右边距 12：' + JSON.stringify(outBR))
+    assert(outBR.y === Math.max(56, vh - openSize.h - 12), vw + 'x' + vh + ' 展开应贴下边距 12：' + JSON.stringify(outBR))
+    const rectTL = { left: 4, top: 56, width: size.w, height: size.h }
+    const outTL = geo.dockExpandedPos(viewport, rectTL, openSize)
+    assert(outTL.x === 4, vw + 'x' + vh + ' 靠左上时展开不该横向乱移：' + JSON.stringify(outTL))
+    assert(outTL.y === 56, vw + 'x' + vh + ' 靠左上时展开不该纵向乱移：' + JSON.stringify(outTL))
+    assert(outTL.x + openSize.w <= vw && outTL.y + openSize.h <= vh, vw + 'x' + vh + ' 展开后不该超出视口')
+  }
 })
 test('解除卡顿：本机装了 dsh-unlag 才出按钮，悬浮写明来源', () => {
   const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')

@@ -92,7 +92,7 @@ data/<目录名>/**      插件数据快照（小文本）
 ## 安装顺序与进度窗
 
 - 打包与安装共用任务队列：`POST /pack|/install { async: true }` 立即返回 job，`GET /jobs` 轮询；`/jobs/cancel` 终止（包在内存组装，取消不落盘）、`/jobs/ack` 续跑、`/jobs/dismiss` 删记录、`/jobs/clear` 清收尾。
-- 悬浮进度窗可拖动（位置存 `localStorage`），没任务时收起只留「进度」胶囊；**胶囊本身也可拖动**（位移 >3px 算拖，否则算点开），位置一律 `left/top`（拖动存的就是左上角，`frame = open && view ? view : pos`）；展开那一下用 `getBoundingClientRect()` 量真实矩形，再向内夹进视口存进 `view`，避免按估计宽高贴边造成的错位；窗口缩放时重算；顶部预留 `DOCK_TOP_INSET = 56`，不让窗口停到 DSH 标签行上；标签行「召回进度窗」通过 `requestDockReset()`/`subscribeDockReset()` 清掉 `localStorage` 位置并回到右下角；收尾记录按 `jobKeepSeconds`（默认 0）与心跳（running 超 10 分钟判失败）处理。
+- 悬浮进度窗可拖动（位置存 `localStorage`），没任务时收起只留「进度」胶囊；**胶囊本身也可拖动**（位移 >3px 算拖，否则算点开），位置只有一个来源 `pos`（`{x,y}` 左上角），渲染前经纯函数 `dockPlacement(viewport, size, pos)` 夹进视口（`size` 由 `offsetWidth/offsetHeight` 量出，不猜常数）；展开用 `dockExpandedPos(viewport, rect, openSize)`：靠右贴右边距 12、靠下贴下边距 12、靠左上原地让，结果写回 `pos` 并存 `localStorage`，收起时不会跳；窗口缩放时重算；顶部预留 `DOCK_TOP_INSET = 56`，不让窗口停到 DSH 标签行上；标签行「召回进度窗」通过 `requestDockReset()`/`subscribeDockReset()` 清掉 `localStorage` 位置并回到右下角；收尾记录按 `jobKeepSeconds`（默认 0）与心跳（running 超 10 分钟判失败）处理。
 - 安装预览：逐插件勾选、有问题的置顶（缺依赖 / 引擎版本不符）、每个带配置的插件可选「包内配置 / 保持本机」、「装后整体启用」、「装后同步市场分组」。
 - 离线安装：勾「离线安装」或探不到 registry 时，只装带本体的插件；只记版本的会逐条说明「联网后再试」。
 
