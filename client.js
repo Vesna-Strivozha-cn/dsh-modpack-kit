@@ -513,21 +513,22 @@ window.__ModuleLoader__.load({
         top: Math.round(clampNum(pos.y, DOCK_TOP_INSET, maxTop)),
       }
     }
-    // 展开时贴到「离它最近的那个角」：靠右就贴右、靠下就贴下，靠左/上就保持原位往里让。
-    // 用真实矩形判断，不猜宽高，所以换成小窗口也不会算歪。
+    const DOCK_MIN_OPEN_H = 220         // 展开后至少要有这么高，再矮就没法看了
+    // 展开时**标题不搬家**：优先保持原位向下长，高度不够就只把最小可用高度凑出来，
+    // 只有横向顶到右边缘时才向左让。绝不按「靠下就贴底」那种做法把窗口甩到屏幕中间。
+    // 返回 { x, y, h }：h 是要给窗口设的高度上限，x/y 是左上角。
     function dockExpandedPos(viewport, rect, openSize) {
       const vw = Math.max(1, Number(viewport.width) || 0)
       const vh = Math.max(1, Number(viewport.height) || 0)
       const w = Math.max(1, Number(openSize.w) || 1)
-      const h = Math.max(1, Number(openSize.h) || 1)
-      const rightHalf = rect.left + rect.width / 2 > vw / 2
-      const bottomHalf = rect.top + rect.height / 2 > vh / 2
-      const left = rightHalf ? vw - w - DOCK_MARGIN : Math.min(rect.left, vw - w - DOCK_MIN_LEFT)
-      const top = bottomHalf ? vh - h - DOCK_MARGIN : Math.min(rect.top, vh - h - DOCK_MIN_LEFT)
-      return {
-        x: Math.round(clampNum(left, DOCK_MIN_LEFT, Math.max(DOCK_MIN_LEFT, vw - w - DOCK_MIN_LEFT))),
-        y: Math.round(clampNum(top, DOCK_TOP_INSET, Math.max(DOCK_TOP_INSET, vh - h - DOCK_MIN_LEFT))),
-      }
+      const want = Math.max(DOCK_MIN_OPEN_H, Number(openSize.h) || DOCK_MIN_OPEN_H)
+      const roomBelow = vh - DOCK_MIN_LEFT - rect.top
+      let h = Math.min(want, Math.max(DOCK_MIN_OPEN_H, roomBelow))
+      let top = rect.top
+      if (roomBelow < DOCK_MIN_OPEN_H) top = vh - DOCK_MIN_LEFT - DOCK_MIN_OPEN_H
+      top = clampNum(top, DOCK_TOP_INSET, Math.max(DOCK_TOP_INSET, vh - h - DOCK_MIN_LEFT))
+      const left = clampNum(rect.left, DOCK_MIN_LEFT, Math.max(DOCK_MIN_LEFT, vw - w - DOCK_MIN_LEFT))
+      return { x: Math.round(left), y: Math.round(top), h: Math.round(h) }
     }
     // 召回：标签行那个显眼按钮通过它把进度窗叫回默认位置
     const dockReset = { subs: new Set() }
@@ -558,6 +559,8 @@ window.__ModuleLoader__.load({
       const [open, setOpen] = useState(false)
       // 量出来的真实尺寸：拖动夹边、展开贴角都用它，绝不猜 132/288 这种数
       const [boxSize, setBoxSize] = useState({ w: 288, h: 132 })
+      // 展开时算出来的高度上限（标题留在原处，只向下长）
+      const [openH, setOpenH] = useState(0)
       useEffect(() => {
         const el = boxRef.current
         if (!el) return
@@ -637,6 +640,7 @@ window.__ModuleLoader__.load({
         // 没拖动就是点了一下标题：展开 / 收起
         if (open) {
           setOpen(false)
+          setOpenH(0)
           return
         }
         const el = boxRef.current
@@ -646,8 +650,9 @@ window.__ModuleLoader__.load({
         const vp = viewportSize()
         const openSize = { w: 380, h: Math.min(Math.round(vp.height * 0.6), 560) }
         const next = dockExpandedPos(vp, rect, openSize)
-        setPos(next)
-        writeDockPos(next)
+        setOpenH(next.h)
+        setPos({ x: next.x, y: next.y })
+        writeDockPos({ x: next.x, y: next.y })
         setOpen(true)
       }
       // 胶囊抬手：拖过就记住位置，没拖就是「打开」
@@ -750,9 +755,7 @@ window.__ModuleLoader__.load({
       // 只要有一条不是「在跑」或「停在风险点」，就给清空入口（状态再怪也算收尾）
       const finished = jobs.filter((job) => job.status !== "running" && job.status !== "paused")
 
-      // 位置一律用 left/top 渲染：拖动存的就是左上角，渲染也照它放，绝不拿估计的宽高去贴右边/下边（那正是「拖到下半部分错位」的来源）。
-      // 展开需要的向内让位在展开那一下按真实矩形算进 view，之后跟手走。
-      // 位置只有一处来源：pos（左上角，{x,y}）。渲染前统一夹进视口，窗口多大就留多大。
+      // 位置只有一处来源：pos（左上角，{x,y}），渲染前统一夹进视口；展开时标题不搬家，只按算出来的高度向下长。
       const placed = dockPlacement(viewportSize(), boxSize, pos)
       const dockPos = placed
         ? { left: placed.left + "px", top: placed.top + "px" }
@@ -764,7 +767,7 @@ window.__ModuleLoader__.load({
           zIndex: 70,
           ...dockPos,
           width: open ? "380px" : "288px",
-          maxHeight: open ? "58vh" : "none",
+          maxHeight: open ? (openH > 0 ? openH + "px" : "58vh") : "none",
           overflow: "auto",
           boxSizing: "border-box",
           padding: "10px 12px",
