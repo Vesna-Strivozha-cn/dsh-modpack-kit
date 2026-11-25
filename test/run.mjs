@@ -1871,6 +1871,16 @@ test('进度窗：相对坐标 + 实时测算，任何窗口尺寸都不错位',
   assert(cli.includes('const frame = dockFrame(viewportSize(), pos, open ? sizeOpen : sizeClosed, headerH, open)'), '渲染直接用实时帧')
   assert(cli.includes('const [sizeClosed, setSizeClosed]'), '收起态尺寸单独量，别和展开混用')
   assert(cli.includes('const [sizeOpen, setSizeOpen]'), '展开态尺寸单独量，别和收起混用')
+  // 召回是唯一「和别的东西协作」的入口：它里面调用的每个函数都必须在文件里真有定义，
+  // 否则一按就 ReferenceError，整个面板会被错误边界吞成空白（之前 clearDockPos 就是这么丢的）。
+  const recallStart = cli.indexOf('subscribeDockReset(() => {')
+  const recallEnd = recallStart < 0 ? -1 : cli.indexOf('}), [])', recallStart)
+  assert(recallStart > 0 && recallEnd > recallStart, '召回回调应该在')
+  const recallBody = cli.slice(recallStart, recallEnd)
+  const called = [...recallBody.matchAll(/([A-Za-z_$][\w$]*)\s*\(/g)].map((m) => m[1])
+  const missing = called.filter((name) => !name.startsWith('set') && !['if', 'for', 'function'].includes(name) && !cli.includes('function ' + name + '('))
+  assert(missing.length === 0, '召回回调里调用了没定义的函数：' + missing.join('、'))
+  assert(cli.includes('function clearDockPos()'), '召回要能把存下来的位置清掉')
   assert(cli.includes('width: frame.w + "px"'), '宽度用实时帧')
   assert(cli.includes('maxHeight: open ? frame.h + "px" : "none"'), '高度用实时帧')
   assert(cli.includes('flexDirection: frame.upward ? "column-reverse" : "column"'), '向上长时标题压在最下面')

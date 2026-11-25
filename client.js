@@ -506,6 +506,12 @@ window.__ModuleLoader__.load({
         }))
       } catch { /* 存不了就算了，不影响本场使用 */ }
     }
+    // 召回：把存在浏览器里的位置清掉，回到默认的右下角
+    function clearDockPos() {
+      try {
+        if (typeof localStorage !== 'undefined') localStorage.removeItem(DOCK_POS_KEY)
+      } catch { /* 清不掉也没关系，下一次拖动会覆盖 */ }
+    }
     // DSH 顶栏 / 标签行大约占这么高：窗口别停在那上面，否则会盖住界面的按钮
     const DOCK_TOP_INSET = 56
     const DOCK_MARGIN = 12            // 离视口边缘至少留这么宽
@@ -596,8 +602,10 @@ window.__ModuleLoader__.load({
       const [, setViewportTick] = useState(0)
       // 标签行的「召回」把窗口叫回右下角默认位置
       useEffect(() => subscribeDockReset(() => {
-        clearDockPos()
+        // 召回是「兜底入口」：任何一步出错都不能把整个面板带崩，所以逐条 try 住
+        try { clearDockPos() } catch { /* 清不掉照样能显示 */ }
         setPos(null)
+        setOpen(false)
         setHidden(false)
         setPinned(true)
       }), [])
