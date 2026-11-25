@@ -2037,6 +2037,25 @@ window.__ModuleLoader__.load({
         setTab("pack")
         setFocus((n) => n + 1)
       }
+      const [refreshing, setRefreshing] = useState(false)
+      const [refreshedAt, setRefreshedAt] = useState(0)
+      const doRefresh = async () => {
+        if (refreshing) return
+        setRefreshing(true)
+        try {
+          if (typeof props.onRefresh === "function") await props.onRefresh()
+          setRefreshedAt(Date.now())
+        } finally {
+          setRefreshing(false)
+        }
+      }
+      const refreshBtn = h("button", {
+        type: "button",
+        style: chipBtn,
+        disabled: refreshing,
+        title: "重新读取 DSH 状态：插件、市场目录与进度窗都拉一遍",
+        onClick: doRefresh,
+      }, refreshing ? "刷新中…" : (refreshedAt ? "刷新 ✓" : "刷新"))
       const tabs = [
         ["pack", "打包"],
         ["install", "安装 / 导入"],
@@ -2071,6 +2090,11 @@ window.__ModuleLoader__.load({
           }, "解除卡顿"),
           unlagMsg ? h("span", { style: hint }, unlagMsg) : null)
         : null
+      useEffect(() => {
+        if (!refreshedAt) return undefined
+        const timer = setTimeout(() => setRefreshedAt(0), 2400)
+        return () => clearTimeout(timer)
+      }, [refreshedAt])
       const envLine = h("span", { style: { ...hint, marginLeft: "auto" } },
         status ? ("DSH " + (status.dshVersion || "?") + " · 已装 " + ((status.installed || []).length) + " 个 · v" + (status.pluginVersion || "?")) : "读取环境…")
 
@@ -2087,7 +2111,7 @@ window.__ModuleLoader__.load({
           },
         },
           h("div", { style: { maxWidth: "1020px", margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: "10px" } },
-            h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine),
+            h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine, refreshBtn),
           unlagNode,
             unlagNode,
             panels,
@@ -2104,7 +2128,7 @@ window.__ModuleLoader__.load({
           h("div", { style: { display: "flex", alignItems: "baseline", gap: "10px", flexWrap: "wrap" } },
             h("h2", { style: { margin: 0, fontSize: "20px", fontWeight: 600 } }, "整合包"),
             h("span", { style: hint }, ((status && status.config && status.config.tagline) || "谁说 dsh 不能整整合包呢？（你说这几个插件整一块不牛逼坏了）"))),
-          h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine),
+          h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine, refreshBtn),
           panels,
           footNote,
           h(RepoFooter, null)),
@@ -2160,7 +2184,7 @@ window.__ModuleLoader__.load({
         return h("div", { style: { padding: "20px 24px", color: "var(--dsw-alias-label-tertiary, #8b909b)", fontSize: "13px" } },
           tries > 0 ? "整合包：还在连 DSH 本体…（自动重试 " + tries + " 次）" : "整合包：读取环境…")
       }
-      return h(Home, { status, surface: (props && props.surface) || "sidebar" })
+      return h(Home, { status, surface: (props && props.surface) || "sidebar", onRefresh: () => load(3) })
     }
 
     const inject = ["slots"]

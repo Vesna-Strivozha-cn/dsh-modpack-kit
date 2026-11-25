@@ -1816,6 +1816,14 @@ test('插件市场：设置里能强制关掉它在侧栏里的那一行，悬�
   assert(cli.includes('data.config.forceHideMarketSidebar === true'), '开机确认要读服务端配置，不能只信界面状态')
 })
 
+test('标签行：刷新按钮和「设置与记录」同一行、排在最右边', () => {
+  const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert(cli.includes('onRefresh: () => load(3)'), 'Page 要把重新读状态的能力传下去')
+  assert(cli.includes('tabs.map(([key, text]) => tabBtn(key, text)), envLine, refreshBtn'), '刷新按钮要排在标签行末尾')
+  assert(cli.includes('refreshing ? "刷新中…"'), '刷新中要有反馈')
+  assert(cli.includes('重新读取 DSH 状态'), '悬浮要说明刷新做了什么')
+})
+
 test('解除卡顿：本机装了 dsh-unlag 才出按钮，悬浮写明来源', () => {
   const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   assert(cli.includes('const UNLAG_STATE_ROUTE = "/dsh-unlag/state"'), '检测要用它自己的 state 接口')
