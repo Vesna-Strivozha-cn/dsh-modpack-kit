@@ -1853,6 +1853,23 @@ test('标签行：刷新按钮和「设置与记录」同一行、排在最右�
   assert(cli.includes('只刷新整合包自己'), '悬浮要写明只刷新整合包自己')
 })
 
+test('进度窗：最小化也能拖，展开时按边界往内侧贴', () => {
+  const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  const pillBlock = cli.slice(cli.indexOf('if (!visible) {'), cli.indexOf('const current = running[0]'))
+  assert(pillBlock.includes('pillRef'), '胶囊要有自己的 ref，才量得出拖动起点')
+  assert(pillBlock.includes('onPointerDown: (event) => startDrag(event, pillRef.current, true)'), '最小化的胶囊也要能拖')
+  assert(pillBlock.includes('onPointerUp: endPillDrag'), '胶囊抬手要决定是拖还是打开')
+  assert(cli.includes('allowOnButton'), '按在胶囊按钮上要放行拖动，不能被「按在按钮上」挡掉')
+  assert(cli.includes('const endPillDrag = () => {'), '胶囊要有自己的抬手处理')
+  assert(cli.includes('if (drag.moved) {') && cli.includes('writeDockPos(drag.last)'), '拖动结束要记住位置')
+  // 展开/收起都要夹在视口里，靠边就往内侧贴
+  assert(cli.includes('const dockPos = pos'), '展开位置要单独算')
+  assert(cli.includes('Math.max(4, vp.width - dockWidth - 4)'), '靠右要往左挪，不许出界')
+  assert(cli.includes('Math.max(4, vp.height - dockHeight - 4)'), '靠下要往上挪，不许出界')
+  assert(cli.includes('const dockHeight = open ? Math.min(Math.round(vp.height * 0.58), 520) : 132'), '展开后的高度要按视口算')
+  assert(cli.includes('window.addEventListener("resize"'), '窗口大小变了要重算贴边位置')
+})
+
 test('解除卡顿：本机装了 dsh-unlag 才出按钮，悬浮写明来源', () => {
   const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   assert(cli.includes('const UNLAG_STATE_ROUTE = "/dsh-unlag/state"'), '检测要用它自己的 state 接口')

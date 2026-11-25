@@ -511,6 +511,9 @@ window.__ModuleLoader__.load({
       const [dockMsg, setDockMsg] = useState("")
       const dragRef = useRef(null)
       const boxRef = useRef(null)
+      const pillRef = useRef(null)
+      // 窗口大小变了要重算贴边位置，所以留一个 tick 触发重渲染
+      const [, setViewportTick] = useState(0)
       const running = jobs.filter((job) => job.status === "running")
       const visible = !hidden && (pinned || running.length > 0)
 
@@ -519,12 +522,19 @@ window.__ModuleLoader__.load({
         if (running.length > 0) { setHidden(false) }
       }, [running.length])
 
-      const startDrag = (event) => {
+      useEffect(() => {
+        if (typeof window === "undefined" || typeof window.addEventListener !== "function") return undefined
+        const onResize = () => setViewportTick((n) => n + 1)
+        window.addEventListener("resize", onResize)
+        return () => { window.removeEventListener("resize", onResize) }
+      }, [])
+      // 最小化的胶囊自己也是一个按钮，所以这一路要放行：不然 pointer 事件会被当成「按在按钮上」直接丢掉。
+      const startDrag = (event, element, allowOnButton) => {
         if (!event || typeof event.clientX !== "number") return
         // 按在按钮上就别当拖动：否则指针捕获会把 click 抢走，按钮点不到，
         // 而且抬手时还会顺带把窗口展开/收起（就是「判定重叠」那个毛病）
-        if (event.target && typeof event.target.closest === "function" && event.target.closest("button")) return
-        const el = boxRef.current
+        if (!allowOnButton && event.target && typeof event.target.closest === "function" && event.target.closest("button")) return
+        const el = element || boxRef.current
         const rect = el && el.getBoundingClientRect ? el.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 }
         dragRef.current = {
           dx: event.clientX - rect.left,
@@ -561,9 +571,30 @@ window.__ModuleLoader__.load({
         // 没拖动就是点了一下标题：展开 / 收起
         setOpen((prev) => !prev)
       }
+      // 胶囊抬手：拖过就记住位置，没拖就是「打开」
+      const endPillDrag = () => {
+        const drag = dragRef.current
+        if (!drag) return
+        dragRef.current = null
+        if (drag.moved) {
+          if (drag.last) writeDockPos(drag.last)
+          return
+        }
+        setPinned(true)
+        setHidden(false)
+      }
 
       if (!visible) {
+        const vp = viewportSize()
+        const pillW = 132
+        const pillH = 42
         const anchor = pos || null
+        const pillPos = anchor
+          ? {
+              left: Math.min(Math.max(4, anchor.x), Math.max(4, vp.width - pillW - 4)) + "px",
+              top: Math.min(Math.max(4, anchor.y), Math.max(4, vp.height - pillH - 4)) + "px",
+            }
+          : { right: "16px", bottom: "16px" }
         const summonStyle = {
           position: "fixed",
           zIndex: 70,
@@ -576,12 +607,22 @@ window.__ModuleLoader__.load({
           background: "var(--dsw-alias-surface-1, rgba(24,26,31,.97))",
           color: "var(--dsw-alias-label-primary)",
           boxShadow: "0 6px 18px rgba(0,0,0,.28)",
-          cursor: "pointer",
+          cursor: pos ? "grab" : "pointer",
           fontSize: "12px",
-          ...(anchor ? { left: anchor.x + "px", top: anchor.y + "px" } : { right: "16px", bottom: "16px" }),
+          touchAction: "none",
+          userSelect: "none",
+          ...pillPos,
         }
         const badge = running.length || jobs.length
-        return h("button", { style: summonStyle, title: "打开整合包进度窗", onClick: () => { setPinned(true); setHidden(false) } },
+        return h("button", {
+          ref: pillRef,
+          style: summonStyle,
+          title: pos ? "打开整合包进度窗（按住可以拖到别处）" : "打开整合包进度窗（按住可以拖到别处）",
+          onPointerDown: (event) => startDrag(event, pillRef.current, true),
+          onPointerMove: moveDrag,
+          onPointerUp: endPillDrag,
+          onPointerCancel: endPillDrag,
+        },
           h("span", { style: { width: "7px", height: "7px", borderRadius: "99px", background: running.length ? "#4C7DF0" : "rgba(127,163,245,.5)" } }),
           "进度",
           badge ? h("span", { style: { ...hint, marginLeft: "0", fontVariantNumeric: "tabular-nums" } }, String(badge)) : null)
@@ -630,12 +671,22 @@ window.__ModuleLoader__.load({
       // 只要有一条不是「在跑」或「停在风险点」，就给清空入口（状态再怪也算收尾）
       const finished = jobs.filter((job) => job.status !== "running" && job.status !== "paused")
 
+      // 展开时按边界往内侧贴：靠右就左移、靠下就上移，绝不超出视口
+      const vp = viewportSize()
+      const dockWidth = open ? 380 : 288
+      const dockHeight = open ? Math.min(Math.round(vp.height * 0.58), 520) : 132
+      const dockPos = pos
+        ? {
+            left: Math.min(Math.max(4, pos.x), Math.max(4, vp.width - dockWidth - 4)) + "px",
+            top: Math.min(Math.max(4, pos.y), Math.max(4, vp.height - dockHeight - 4)) + "px",
+          }
+        : { right: "16px", bottom: "16px" }
       return h("div", {
         ref: boxRef,
         style: {
           position: "fixed",
           zIndex: 70,
-          ...(pos ? { left: pos.x + "px", top: pos.y + "px" } : { right: "16px", bottom: "16px" }),
+          ...dockPos,
           width: open ? "380px" : "288px",
           maxHeight: open ? "58vh" : "none",
           overflow: "auto",
