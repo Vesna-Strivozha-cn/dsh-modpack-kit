@@ -2076,11 +2076,11 @@ window.__ModuleLoader__.load({
           h("div", { style: { ...hint, borderTop: "0.5px solid var(--dsw-alias-border-l2)", paddingTop: "8px", marginTop: "2px" } }, "插件市场自己那一行（与上面整合包的入口无关）："),
           h(Switch, {
             checked: cfg.forceHideMarketSidebar === true,
-            label: "强制关闭插件市场在侧栏里的那一行（只关市场自己的，不动整合包）",
+            label: "强制关闭侧栏里的插件市场显示",
             title: "每次开机强制显示还关不掉很烦吧",
             onChange: (v) => toggleMarketSidebar(v),
           }),
-          h("div", { style: hint }, "改的是市场存在 .dsh-market/state.json 里的 sidebarEntry，不动它的安装，也不动整合包的入口。"),
+          h("div", { style: hint }, "只关市场自己的，不动整合包：改的是它存在 .dsh-market/state.json 里的 sidebarEntry，不动它的安装，也不动整合包的入口。"),
           marketSidebarMsg ? h("div", { style: hint }, marketSidebarMsg) : null,
           saved ? h("span", { style: hint }, saved) : null),
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },

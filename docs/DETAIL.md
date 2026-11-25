@@ -87,7 +87,7 @@ data/<目录名>/**      插件数据快照（小文本）
 
 ## 插件市场侧栏入口与「解除卡顿」
 
-- 设置里的「强制关闭插件市场在侧栏里的那一行」：写市场的 `POST /dsh-market/sidebar-entry { enabled: false }`，只改它存在 `<profile>/.dsh-market/state.json` 的 `sidebarEntry`，不改安装状态；市场用 409 拒绝「三个入口全关」时如实显示原因。开机时若开关为真，客户端会再确认一次。
+- 设置里的「强制关闭侧栏里的插件市场显示」：写市场的 `POST /dsh-market/sidebar-entry { enabled: false }`，只改它存在 `<profile>/.dsh-market/state.json` 的 `sidebarEntry`，不改安装状态；市场用 409 拒绝「三个入口全关」时如实显示原因。开机时若开关为真，客户端会再确认一次。
 - 「解除卡顿」（`dsh-unlag`）：`GET /dsh-unlag/state` 能读到 `version` 才显示按钮；按下走 `POST /dsh-unlag/reload?requestId=…`，带 `content-type: application/json` 与 `x-dsh-unlag: 1`，同源、本地 Host。按钮的 `title` 写明来源与版本。
 ## 安装顺序与进度窗
 

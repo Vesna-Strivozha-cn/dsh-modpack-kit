@@ -1822,7 +1822,7 @@ test('插件市场：设置里能强制关掉它在侧栏里的那一行，悬�
   assert(store.includes('forceHideMarketSidebar: false'), '设置项要有默认值，默认不关别人家的东西')
   assert(cli.includes('const MARKET_SIDEBAR_ROUTE = "/dsh-market/sidebar-entry"'), '要写插件市场自己的侧栏入口接口')
   assert(cli.includes('body: JSON.stringify({ enabled: enabled === true })'), '写的是市场的 enabled，不是我们的设置')
-  assert(cli.includes('强制关闭插件市场在侧栏里的那一行'), '设置里要有这个开关')
+  assert(cli.includes('强制关闭侧栏里的插件市场显示'), '设置里要有这个开关')
   assert(cli.includes('每次开机强制显示还关不掉很烦吧'), '悬浮要写主人指定的那句话')
   assert(cli.includes('forceHideMarketSidebar === true'), '开机要按设置再确认一次')
   assert(cli.includes('只关市场自己的，不动整合包'), '开关文案要写明关的是市场自己那一行')
