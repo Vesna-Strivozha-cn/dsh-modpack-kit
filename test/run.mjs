@@ -1799,6 +1799,28 @@ test('AI 搜索：借用插件市场新接口，旧版市场自动退回关键�
   assert(idx.includes('searchCache.get(cacheKey)') && idx.includes('searchCache.size > 40'), '缓存要有命中与容量上限')
 })
 
+test('插件市场：设置里能强制关掉它在侧栏里的那一行，悬浮写明理由', () => {
+  const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  const store = fs.readFileSync(new URL('../lib/store.mjs', import.meta.url), 'utf8')
+  assert(store.includes('forceHideMarketSidebar: false'), '设置项要有默认值，默认不关别人家的东西')
+  assert(cli.includes('const MARKET_SIDEBAR_ROUTE = "/dsh-market/sidebar-entry"'), '要写插件市场自己的侧栏入口接口')
+  assert(cli.includes('body: JSON.stringify({ enabled: enabled === true })'), '写的是市场的 enabled，不是我们的设置')
+  assert(cli.includes('强制关闭插件市场在侧栏里的那一行'), '设置里要有这个开关')
+  assert(cli.includes('每次开机强制显示还关不掉很烦吗'), '悬浮要写主人指定的那句话')
+  assert(cli.includes('forceHideMarketSidebar === true'), '开机要按设置再确认一次')
+  assert(cli.includes('enforceMarketSidebarOff'), '插件加载时就要关一次，不必等用户点开某一栏')
+  assert(cli.includes('data.config.forceHideMarketSidebar === true'), '开机确认要读服务端配置，不能只信界面状态')
+})
+
+test('解除卡顿：本机装了 dsh-unlag 才出按钮，悬浮写明来源', () => {
+  const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert(cli.includes('const UNLAG_STATE_ROUTE = "/dsh-unlag/state"'), '检测要用它自己的 state 接口')
+  assert(cli.includes('"x-dsh-unlag": "1"'), '按下要带它要求的头，否则 403')
+  assert(cli.includes('/dsh-unlag/reload?requestId='), '按钮就是让它整理一次')
+  assert(cli.includes('来自插件市场的 dsh-unlag@'), '悬浮要写明来源与版本，别让人以为是本插件功能')
+  assert(cli.includes('typeof data.version === "string"'), '读不到版本就当没装，别硬塞按钮')
+})
+
 for (const [state, name, detail] of results) {
   if (state === 'ok') console.log('ok   ' + name)
   else console.log('FAIL ' + name + '\n' + detail)

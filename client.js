@@ -201,6 +201,72 @@ window.__ModuleLoader__.load({
       return data
     }
 
+    // 插件市场的侧栏入口（/dsh-market/sidebar-entry）：本条开关就是替市场把 enabled 关掉。
+    // 市场那一行是它自己的偏好，存在 profile 的 .dsh-market/state.json 里；我们只写这一个键。
+    const MARKET_SIDEBAR_ROUTE = "/dsh-market/sidebar-entry"
+    async function readMarketSidebar() {
+      try {
+        const res = await fetch(MARKET_SIDEBAR_ROUTE, { headers: { Accept: "application/json" }, credentials: "same-origin" })
+        if (!res.ok) return null
+        const data = await res.json()
+        return data && typeof data.enabled === "boolean" ? data : null
+      } catch (e) { return null }
+    }
+    async function writeMarketSidebar(enabled) {
+      const res = await fetch(MARKET_SIDEBAR_ROUTE, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ enabled: enabled === true }),
+      })
+      let data = null
+      try { data = await res.json() } catch (e) { data = null }
+      if (!res.ok) {
+        const error = new Error((data && (data.error || data.message)) || ("插件市场拒绝了这次修改（HTTP " + res.status + "）"))
+        error.status = res.status
+        throw error
+      }
+      return data
+    }
+
+    // 开机把市场的侧栏入口关一次：插件加载时拉 /status 顺带执行，不必等用户点开某一栏。
+    let marketSidebarForced = false
+    async function enforceMarketSidebarOff() {
+      if (marketSidebarForced) return
+      const current = await readMarketSidebar()
+      if (!current) return
+      if (current.enabled !== true) { marketSidebarForced = true; return }
+      try { await writeMarketSidebar(false); marketSidebarForced = true } catch (e) { marketSidebarForced = true }
+    }
+
+    // 解除卡顿插件（dsh-unlag）：装了才有按钮。只读它的 /state；按一次要带它要的头。
+    const UNLAG_STATE_ROUTE = "/dsh-unlag/state"
+    async function detectUnlag() {
+      try {
+        const res = await fetch(UNLAG_STATE_ROUTE, { headers: { Accept: "application/json" }, credentials: "same-origin" })
+        if (!res.ok) return null
+        const data = await res.json()
+        return data && typeof data.version === "string" ? data : null
+      } catch (e) { return null }
+    }
+    async function pressUnlag() {
+      const requestId = "modpack-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8)
+      const res = await fetch("/dsh-unlag/reload?requestId=" + encodeURIComponent(requestId), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-dsh-unlag": "1" },
+        credentials: "same-origin",
+        body: JSON.stringify({}),
+      })
+      let data = null
+      try { data = await res.json() } catch (e) { data = null }
+      if (!res.ok) {
+        const error = new Error((data && (data.status || data.message || data.error)) || ("解除卡顿拒绝了这次请求（HTTP " + res.status + "）"))
+        error.status = res.status
+        throw error
+      }
+      return data
+    }
+
     // 宿主有没有原生的目录选择器：有就能点「浏览文件夹…」，没有就退回手填
     let pickDirectoryHost = null
 
@@ -258,7 +324,7 @@ window.__ModuleLoader__.load({
     }
 
     function Switch(props) {
-      return h("label", { style: { display: "inline-flex", gap: "6px", alignItems: "center", fontSize: "12.5px", cursor: props.disabled ? "not-allowed" : "pointer", opacity: props.disabled ? 0.45 : 1 } },
+      return h("label", { title: props.title || undefined, style: { display: "inline-flex", gap: "6px", alignItems: "center", fontSize: "12.5px", cursor: props.disabled ? "not-allowed" : "pointer", opacity: props.disabled ? 0.45 : 1 } },
         h("input", { type: "checkbox", checked: !!props.checked, disabled: !!props.disabled, onChange: (e) => props.onChange(e.target.checked) }),
         props.label)
     }
@@ -1708,6 +1774,7 @@ window.__ModuleLoader__.load({
       // 记录用本地状态：删一条不用整页重读，删完立刻看到结果
       const [history, setHistory] = useState((((props.status || {}).history) || []).slice())
       const [historyMsg, setHistoryMsg] = useState("")
+      const [marketSidebarMsg, setMarketSidebarMsg] = useState("")
       const dropHistory = async (item, all) => {
         setHistoryMsg("")
         try {
@@ -1736,6 +1803,20 @@ window.__ModuleLoader__.load({
         } finally { setBusy(false) }
       }
       const setField = (key, value) => setCfg((prev) => ({ ...(prev || {}), [key]: value }))
+      // 打开就替市场把侧栏入口关掉；关掉就还回去。市场没装就只提示，不报错。
+      const toggleMarketSidebar = async (on) => {
+        setMarketSidebarMsg("")
+        setField("forceHideMarketSidebar", on)
+        await patch({ forceHideMarketSidebar: on })
+        const current = await readMarketSidebar()
+        if (!current) { setMarketSidebarMsg("没装插件市场（dshmarket），或者在旧版本上没有这个入口。"); return }
+        try {
+          await writeMarketSidebar(!on)
+          setMarketSidebarMsg(on ? "已关掉：市场侧栏那一行现在不显示。" : "已恢复：市场侧栏那一行按它的设置显示。")
+        } catch (e) {
+          setMarketSidebarMsg((e && e.message) || String(e))
+        }
+      }
       // 体积上限按 MB 输：先把输入框里的原始文本存着，点「保存数值」才换算成字节，
       // 这样不会每敲一个数字就四舍五入一次（以前会越打越多，最后存成 25 GB 这种值）。
       const [limitDraft, setLimitDraft] = useState(String(Math.round(((props.status && props.status.config && props.status.config.maxPackBytes) || 256 * 1048576) / 1048576)))
@@ -1878,6 +1959,16 @@ window.__ModuleLoader__.load({
             h(Switch, { checked: cfg.showInPluginsTab === true, disabled: placementLocked("showInPluginsTab"), label: "在插件页内显示（与插件市场同一位置，单开一栏「整合包」）" + (placementLocked("showInPluginsTab") ? "（最后剩这一个，不能关）" : ""), onChange: (v) => savePlacement("showInPluginsTab", v) })),
           saved ? h("span", { style: hint }, saved) : null),
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
+          h("div", { style: strong }, "插件市场"),
+          h("div", { style: hint }, "只改插件市场自己那一行侧栏入口的偏好，不动它的安装与其它设置。"),
+          h(Switch, {
+            checked: cfg.forceHideMarketSidebar === true,
+            label: "强制关闭插件市场在侧栏里的那一行",
+            title: "每次开机强制显示还关不掉很烦吗",
+            onChange: (v) => toggleMarketSidebar(v),
+          }),
+          marketSidebarMsg ? h("div", { style: hint }, marketSidebarMsg) : null),
+        h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
           h("div", { style: strong }, "插件目录（分类 · 搜索 · 分页）"),
           h("div", { style: hint }, (() => {
             const c = props.status && props.status.catalog
@@ -1905,6 +1996,35 @@ window.__ModuleLoader__.load({
       const embedded = surface === "plugins"
       const [packResult, setPackResult] = useState(() => readPackValue())
       const [focus, setFocus] = useState(0)
+      const [unlag, setUnlag] = useState(null)
+      const [unlagMsg, setUnlagMsg] = useState("")
+      // 解除卡顿是别人家的插件：有就出按钮，没有就什么都不显示。
+      useEffect(() => {
+        let alive = true
+        detectUnlag().then((data) => { if (alive) setUnlag(data) })
+        return () => { alive = false }
+      }, [])
+      const pressUnlagNow = async () => {
+        setUnlagMsg("正在让解除卡顿整理…")
+        try {
+          const data = await pressUnlag()
+          const status = data && (data.status || data.verdict)
+          setUnlagMsg(status ? ("解除卡顿：" + status) : "已请求，稍等一下看结果")
+        } catch (e) {
+          setUnlagMsg((e && e.message) || String(e))
+        }
+      }
+      // 开机把市场的侧栏入口按设置再关一次：市场自己每次启动都会把它打开。
+      const forceHideMarket = !!(status && status.config && status.config.forceHideMarketSidebar === true)
+      useEffect(() => {
+        if (!forceHideMarket) return
+        let alive = true
+        readMarketSidebar().then((data) => {
+          if (!alive || !data || data.enabled !== true) return
+          writeMarketSidebar(false).catch(() => {})
+        })
+        return () => { alive = false }
+      }, [forceHideMarket])
       useEffect(() => subscribePack((value) => { setPackResult(value) }), [])
       const savePackResult = (value) => {
         setPackValue(value)
@@ -1942,6 +2062,16 @@ window.__ModuleLoader__.load({
         tab === "settings" ? h(SettingsPanel, { status }) : null,
       ]
       const footNote = h("div", { style: hint }, "说明：整合包只打包你选择的插件与必要配置。打包与安装安全检测在内存中进行，命中原文不落盘；请遵守插件作者许可证与你所在地区的法律法规。")
+      const unlagNode = unlag
+        ? h("div", { style: row },
+          h("button", {
+            type: "button",
+            style: chipBtn,
+            title: "来自插件市场的 dsh-unlag@" + (unlag.version || "?") + "（不是本插件的功能：装了才有）",
+            onClick: pressUnlagNow,
+          }, "解除卡顿"),
+          unlagMsg ? h("span", { style: hint }, unlagMsg) : null)
+        : null
       const envLine = h("span", { style: { ...hint, marginLeft: "auto" } },
         status ? ("DSH " + (status.dshVersion || "?") + " · 已装 " + ((status.installed || []).length) + " 个 · v" + (status.pluginVersion || "?")) : "读取环境…")
 
@@ -1959,6 +2089,8 @@ window.__ModuleLoader__.load({
         },
           h("div", { style: { maxWidth: "1020px", margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: "10px" } },
             h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine),
+          unlagNode,
+            unlagNode,
             panels,
             footNote,
             h(RepoFooter, null)),
@@ -2088,6 +2220,7 @@ window.__ModuleLoader__.load({
         try {
           const data = await api("/status")
           if (data && data.ok && data.placements) setPlacement(data.placements)
+          if (data && data.config && data.config.forceHideMarketSidebar === true) enforceMarketSidebarOff()
         } catch (e) {
           if (left > 0) setTimeout(() => { refreshPlacement(left - 1) }, 700 * (3 - left))
         }

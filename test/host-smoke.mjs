@@ -580,7 +580,7 @@ await step('清空进程：清掉收尾与失败的，跑着的留着；已完�
   })
   const brokenId = broken.data.job.id
   let brokenJob = null
-  for (let i = 0; i < 80; i++) {
+  for (let i = 0; i < 240; i++) {
     const snap = await call('/dsh-modpack-kit/api/jobs')
     brokenJob = snap.data.jobs.find((job) => job.id === brokenId)
     if (brokenJob && brokenJob.status !== 'running') break

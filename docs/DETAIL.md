@@ -81,6 +81,10 @@ data/<目录名>/**      插件数据快照（小文本）
 - 失败分三种：旧版市场没有路由（开关不出现）、`no-model`（提示去「设置 → 模型」配一个）、模型报错（原样显示消息，关键词搜索照常可用）。
 - 不在本插件里保存模型与 Key：模型调用完全由插件市场那边完成，这里只做一层界面与结果映射。市场也没有自己的 token——它走宿主 `llm` 服务 + `agentDefaultModel.currentSelection()`，扣的是你「设置 → 模型」里的那把 Key。
 
+## 插件市场侧栏入口与「解除卡顿」
+
+- 设置里的「强制关闭插件市场在侧栏里的那一行」：写市场的 `POST /dsh-market/sidebar-entry { enabled: false }`，只改它存在 `<profile>/.dsh-market/state.json` 的 `sidebarEntry`，不改安装状态；市场用 409 拒绝「三个入口全关」时如实显示原因。开机时若开关为真，客户端会再确认一次。
+- 「解除卡顿」（`dsh-unlag`）：`GET /dsh-unlag/state` 能读到 `version` 才显示按钮；按下走 `POST /dsh-unlag/reload?requestId=…`，带 `content-type: application/json` 与 `x-dsh-unlag: 1`，同源、本地 Host。按钮的 `title` 写明来源与版本。
 ## 安装顺序与进度窗
 
 - 打包与安装共用任务队列：`POST /pack|/install { async: true }` 立即返回 job，`GET /jobs` 轮询；`/jobs/cancel` 终止（包在内存组装，取消不落盘）、`/jobs/ack` 续跑、`/jobs/dismiss` 删记录、`/jobs/clear` 清收尾。
