@@ -2041,21 +2041,16 @@ window.__ModuleLoader__.load({
       const [refreshedAt, setRefreshedAt] = useState(0)
       const [refreshMsg, setRefreshMsg] = useState("")
       const [refreshNote, setRefreshNote] = useState("")
-      // 刷新优先交给插件市场里的「解除卡顿」：它有一套自己的重载接口，能让卡住的页面真的重来一遍。
-      // 没装它时才退回只重读 DSH 状态（这也是装不了别的插件时唯一能做的）。
+      // 刷新只管整合包自己：重读本插件看到的状态，再把三个面板重挂一次让它们各自重新取数。
+      // 不碰别的插件，也不调「解除卡顿」——那个插件有自己的按钮，各管各的。
       const doRefresh = async () => {
         if (refreshing) return
         setRefreshing(true)
         setRefreshMsg("")
         setRefreshNote("")
         try {
-          if (unlag) {
-            await pressUnlagNow()
-            setRefreshNote("已让解除卡顿执行一次刷新")
-          } else {
-            if (typeof props.onRefresh === "function") await props.onRefresh()
-            setRefreshNote("没装解除卡顿（dsh-unlag）：只重读了 DSH 状态")
-          }
+          if (typeof props.onRefresh === "function") await props.onRefresh()
+          setRefreshNote("已重新读取整合包自己的状态")
           setRefreshedAt(Date.now())
         } catch (e) {
           setRefreshMsg("刷新失败：" + String((e && e.message) || e))
@@ -2068,7 +2063,7 @@ window.__ModuleLoader__.load({
         type: "button",
         style: chipBtn,
         disabled: refreshing,
-        title: unlag ? ("让插件市场里的「解除卡顿」（dsh-unlag@" + (unlag.version || "?") + "）执行一次刷新") : "重新读取 DSH 状态：插件、市场目录与进度窗都拉一遍（本机没装解除卡顿）",
+        title: "只刷新整合包自己：重新读一遍插件列表、市场目录与进度窗，再把三个面板重挂一次；不调用别的插件",
         onClick: doRefresh,
       }, refreshing ? "刷新中…" : (refreshMsg ? "刷新失败" : refreshedAt ? "刷新 ✓" : "刷新"))
       const tabs = [

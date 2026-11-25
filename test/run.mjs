@@ -788,7 +788,7 @@ await testAsync('客户端组件在假 React 下能渲染（抓未定义变量�
   let refreshCalls = 0
   const withRefresh = mod.Home({ status, gen: 0, onRefresh: async () => { refreshCalls += 1 } })
   render(withRefresh)
-  const refreshButtons = seen.filter((n) => n.type === "button" && typeof n.props.title === "string" && n.props.title.indexOf("重新读取 DSH 状态") === 0)
+  const refreshButtons = seen.filter((n) => n.type === "button" && typeof n.props.title === "string" && n.props.title.indexOf("只刷新整合包自己") === 0)
   const refreshBtnNode = refreshButtons[refreshButtons.length - 1] // 取最后一次渲染的那个（带着 onRefresh）
   assert(Boolean(refreshBtnNode), "标签行里要有刷新按钮")
   await refreshBtnNode.props.onClick()
@@ -1840,16 +1840,17 @@ test('标签行：刷新按钮和「设置与记录」同一行、排在最右�
   assert(cli.includes('refreshMsg ? h("span"'), '刷新失败原因要显示在标签行里')
   assert(cli.includes('refreshBtn)'), '刷新按钮要排在标签行末尾')
   assert(cli.includes('refreshing ? "刷新中…"'), '刷新中要有反馈')
-  assert(cli.includes('重新读取 DSH 状态'), '悬浮要说明刷新做了什么')
+  assert(cli.includes('重新读一遍插件列表、市场目录与进度窗'), '悬浮要说明刷新做了什么')
   assert(cli.includes('setGen((n) => n + 1)'), '刷新后要让面板重挂，否则看起来像没反应')
   assert(cli.includes('key: "pack-" + gen'), '面板要用 gen 当 key')
   assert(cli.includes('刷新失败：'), '刷新失败要给出原因')
-  // 刷新优先交给「解除卡顿」：装了它就走它的重载接口，没装才退回重读状态。
-  assert(cli.includes('if (unlag) {'), '刷新要先判断本机有没有解除卡顿')
-  assert(cli.includes('await pressUnlagNow()'), '装了解除卡顿就调它的刷新，而不是只重读状态')
-  assert(cli.includes('已让解除卡顿执行一次刷新'), '调完要说明这次刷新是谁做的')
-  assert(cli.includes('没装解除卡顿（dsh-unlag）：只重读了 DSH 状态'), '没装时要说清只重读了状态')
-  assert(cli.includes('让插件市场里的「解除卡顿」'), '悬浮要写明这是让解除卡顿刷新')
+  // 刷新只管整合包自己：不调别的插件（「解除卡顿」有自己的按钮）。
+  const refreshBlock = cli.slice(cli.indexOf('const doRefresh = async () => {'), cli.indexOf('const gen = props.gen'))
+  assert(!refreshBlock.includes('pressUnlag'), '刷新不许去调解除卡顿')
+  assert(!refreshBlock.includes('dsh-unlag'), '刷新里不该出现别的插件的接口')
+  assert(refreshBlock.includes('props.onRefresh'), '刷新要重读整合包自己的状态')
+  assert(cli.includes('已重新读取整合包自己的状态'), '刷完要说明只刷了自己')
+  assert(cli.includes('只刷新整合包自己'), '悬浮要写明只刷新整合包自己')
 })
 
 test('解除卡顿：本机装了 dsh-unlag 才出按钮，悬浮写明来源', () => {
