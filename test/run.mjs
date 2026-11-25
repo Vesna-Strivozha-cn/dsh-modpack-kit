@@ -1863,10 +1863,15 @@ test('进度窗：最小化也能拖，展开时按边界往内侧贴', () => {
   assert(cli.includes('const endPillDrag = () => {'), '胶囊要有自己的抬手处理')
   assert(cli.includes('if (drag.moved) {') && cli.includes('writeDockPos(drag.last)'), '拖动结束要记住位置')
   // 展开/收起都要夹在视口里，靠边就往内侧贴
-  assert(cli.includes('const dockPos = pos'), '展开位置要单独算')
+  assert(cli.includes('const dockPos = (() => {'), '展开位置要单独算')
   assert(cli.includes('Math.max(4, vp.width - dockWidth - 4)'), '靠右要往左挪，不许出界')
   assert(cli.includes('Math.max(4, vp.height - dockHeight - 4)'), '靠下要往上挪，不许出界')
-  assert(cli.includes('const dockHeight = open ? Math.min(Math.round(vp.height * 0.58), 520) : 132'), '展开后的高度要按视口算')
+  assert(cli.includes('const dockHeight = open ? Math.min(Math.round(vp.height * 0.58), 520) : collapsedH'), '展开后的高度要按视口算')
+  // 展开要「锚住靠边那一侧」往里长，而不是整块跳走
+  assert(cli.includes('const rightAnchor = pos.x + collapsedW / 2 > vp.width / 2'), '靠右时锚右边')
+  assert(cli.includes('const bottomAnchor = pos.y + collapsedH / 2 > vp.height / 2'), '靠下时锚下边')
+  assert(cli.includes('style.right = Math.min(gap, Math.max(4, vp.width - dockWidth - 4)) + "px"'), '展开时右边距不变，向左多占')
+  assert(cli.includes('style.bottom = Math.min(gap, Math.max(4, vp.height - dockHeight - 4)) + "px"'), '展开时下边距不变，向上多占')
   assert(cli.includes('window.addEventListener("resize"'), '窗口大小变了要重算贴边位置')
 })
 

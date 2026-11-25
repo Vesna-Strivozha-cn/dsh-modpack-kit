@@ -671,16 +671,33 @@ window.__ModuleLoader__.load({
       // 只要有一条不是「在跑」或「停在风险点」，就给清空入口（状态再怪也算收尾）
       const finished = jobs.filter((job) => job.status !== "running" && job.status !== "paused")
 
-      // 展开时按边界往内侧贴：靠右就左移、靠下就上移，绝不超出视口
+      // 展开时**锚住靠边的那一侧**往里长：在右边就固定右边的间距、往左长；在下面就固定下边、往上长。
+      // 只按左上角夹会让窗口一展开就整块跳走（靠右下时尤其明显），所以改用「哪边近就锚哪边」。
       const vp = viewportSize()
-      const dockWidth = open ? 380 : 288
-      const dockHeight = open ? Math.min(Math.round(vp.height * 0.58), 520) : 132
-      const dockPos = pos
-        ? {
-            left: Math.min(Math.max(4, pos.x), Math.max(4, vp.width - dockWidth - 4)) + "px",
-            top: Math.min(Math.max(4, pos.y), Math.max(4, vp.height - dockHeight - 4)) + "px",
-          }
-        : { right: "16px", bottom: "16px" }
+      const collapsedW = 288
+      const collapsedH = 132
+      const dockWidth = open ? 380 : collapsedW
+      const dockHeight = open ? Math.min(Math.round(vp.height * 0.58), 520) : collapsedH
+      const dockPos = (() => {
+        if (!pos) return { right: "16px", bottom: "16px" }
+        const style = {}
+        const rightAnchor = pos.x + collapsedW / 2 > vp.width / 2
+        const bottomAnchor = pos.y + collapsedH / 2 > vp.height / 2
+        if (rightAnchor) {
+          // 收起时的右边距保持不变，展开就向左多占 92px；又不许顶出左边
+          const gap = Math.max(4, vp.width - (pos.x + collapsedW))
+          style.right = Math.min(gap, Math.max(4, vp.width - dockWidth - 4)) + "px"
+        } else {
+          style.left = Math.min(Math.max(4, pos.x), Math.max(4, vp.width - dockWidth - 4)) + "px"
+        }
+        if (bottomAnchor) {
+          const gap = Math.max(4, vp.height - (pos.y + collapsedH))
+          style.bottom = Math.min(gap, Math.max(4, vp.height - dockHeight - 4)) + "px"
+        } else {
+          style.top = Math.min(Math.max(4, pos.y), Math.max(4, vp.height - dockHeight - 4)) + "px"
+        }
+        return style
+      })()
       return h("div", {
         ref: boxRef,
         style: {
