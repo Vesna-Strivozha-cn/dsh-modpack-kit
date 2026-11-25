@@ -1862,7 +1862,8 @@ test('进度窗：最小化也能拖，位置照 left/top 放，展开时按真�
   assert(cli.includes('allowOnButton'), '按在胶囊按钮上要放行拖动，不能被「按在按钮上」挡掉')
   assert(cli.includes('const endPillDrag = () => {'), '胶囊要有自己的抬手处理')
   // 位置必须老实按 left/top 渲染：之前按估计宽高去贴右边/下边，拖到下半部分就会错位
-  assert(cli.includes('const frame = open && view ? view : pos'), '渲染位置只看 frame')
+  assert(cli.includes('const frame = open && view ? view : (pos ? { left: pos.x, top: pos.y } : null)'), '渲染位置只看 frame（pos 是 x/y，view 是 left/top，必须归一化）')
+  assert(cli.includes('left: frame.left + "px"'), '归一化后按 left 渲染，不能再出现 undefinedpx')
   assert(cli.includes('{ left: frame.left + "px", top: frame.top + "px" }'), '只写 left/top，不写 right/bottom')
   assert(!cli.includes('rightAnchor') && !cli.includes('bottomAnchor'), '不许再有「猜哪边近就锚哪边」的写法')
   // 展开那一下用真实矩形算，再向内夹进视口

@@ -714,7 +714,8 @@ window.__ModuleLoader__.load({
 
       // 位置一律用 left/top 渲染：拖动存的就是左上角，渲染也照它放，绝不拿估计的宽高去贴右边/下边（那正是「拖到下半部分错位」的来源）。
       // 展开需要的向内让位在展开那一下按真实矩形算进 view，之后跟手走。
-      const frame = open && view ? view : pos
+      // 注意两种形状：pos 存的是 { x, y }（拖动合同时的格式），view 是 { left, top }，这里先归一化再渲染
+      const frame = open && view ? view : (pos ? { left: pos.x, top: pos.y } : null)
       const dockPos = frame
         ? { left: frame.left + "px", top: frame.top + "px" }
         : { right: "16px", bottom: "16px" }
