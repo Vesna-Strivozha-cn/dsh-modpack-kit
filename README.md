@@ -48,7 +48,7 @@ dsh plugin --profile desktop add github:Vesna-Strivozha-cn/dsh-modpack-kit
 - AI 搜索同源（0.2.1 起）：搜索框的「AI 搜索」直接调用插件市场新版本的 `POST /dsh-market/ai-search`，用的是同一套目录、同一个模型配置，不在本插件里另存模型与 Key；市场是旧版就没有这个开关。**AI 搜索花的 token 记在插件市场那边**——它用你在「设置 → 模型」里配的模型发请求、扣你的额度，本插件只转发问题与结果。
 - 分组同源：直接读市场存在 profile 下的 `.dsh-market/state.json`（只读），把「已装」按你的分组折叠展示，组头带「一键加入」「清空本组」。
 - 装完的身份：插件市场只看 profile 里的依赖写法——`file:`/`link:` 就是「本地」，semver 才是市场版。所以从市场取的插件一律按 `name@version` 装（清单里带版本号就不再问 registry），轻量包下载完也按版本装；只有确实拿不到市场版、退回包内副本时才会写成 `file:`，安装结果里会明确提示「插件市场会把它显示成本地安装」。
-- 市场侧栏那一行：设置里有「强制关闭插件市场在侧栏里的那一行」开关，打开就替市场写 `POST /dsh-market/sidebar-entry { enabled: false }`（它自己的偏好存在 `<profile>/.dsh-market/state.json`，我们只改这一个键），每次开机再确认一次；关掉开关就还回去。
+- 市场侧栏那一行（关的是市场自己的，不是整合包的）：设置里有「强制关闭插件市场在侧栏里的那一行（只关市场自己的，不动整合包）」开关，打开就替市场写 `POST /dsh-market/sidebar-entry { enabled: false }`（它自己的偏好存在 `<profile>/.dsh-market/state.json`，我们只改这一个键），每次开机再确认一次；关掉开关就还回去。
 
 **有市场 / 没市场对照**
 

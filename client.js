@@ -1960,10 +1960,11 @@ window.__ModuleLoader__.load({
           saved ? h("span", { style: hint }, saved) : null),
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
           h("div", { style: strong }, "插件市场"),
-          h("div", { style: hint }, "只改插件市场自己那一行侧栏入口的偏好，不动它的安装与其它设置。"),
+          h("div", { style: hint }, "只关插件市场自己那一行侧栏入口：改的是它存在 .dsh-market/state.json 里的 sidebarEntry，不动它的安装、也不动整合包的入口。"),
+          h("div", { style: hint }, "整合包自己的三处在上一栏「显示位置」，两套开关互不影响。"),
           h(Switch, {
             checked: cfg.forceHideMarketSidebar === true,
-            label: "强制关闭插件市场在侧栏里的那一行",
+            label: "强制关闭插件市场在侧栏里的那一行（只关市场自己的，不动整合包）",
             title: "每次开机强制显示还关不掉很烦吗",
             onChange: (v) => toggleMarketSidebar(v),
           }),
