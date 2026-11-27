@@ -6,9 +6,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import plugin from '../index.js'
 
-import { mountFakeHost } from '../dev/tools/fake-host.mjs'
 
 // 烟测会真的打几个包、写 history.json 和 modpack.log。
 // 这些是「使用者自己的记录」，测试不能往里灌：没显式给 DSH_HOME 时，
@@ -23,6 +21,11 @@ if (!process.env.DSH_HOME) {
     } catch {}
   })
 }
+
+// 注意：必须在上面把 DSH_HOME 设好之后再 import 插件——静态 import 会被提升到模块体之前执行，
+// 那样插件会把使用者真实的 settings.json 读进缓存（曾经因此让「默认开启」这条断言在真实配置关掉时红掉）。
+const { default: plugin } = await import('../index.js')
+const { mountFakeHost } = await import('../dev/tools/fake-host.mjs')
 
 // 假 ctx 里打包是同步 CPU 活，会在微任务里一口气跑完；延后 1200ms 开跑，
 // 才有窗口验证「跑着的任务不能被删 / 不能被清空」。
@@ -710,14 +713,20 @@ await step('社区资源：目录接口、检索与下载都能单独跑，不�
   assert.ok(/没有|不存在|目录/u.test(String(download.data.error || '')), '要说明为什么下不了：' + download.data.error)
 })
 
-await step('社区资源：附属开关默认开，关掉后状态里也如实反映', async () => {
+await step('社区资源：附属开关能在状态里如实反映，关掉再打开都落盘', async () => {
   const st = await call('/dsh-modpack-kit/api/status')
   assert.equal(typeof st.data.modpackMarket, 'object', 'status 要带社区资源摘要')
   assert.equal(st.data.modpackMarket.repo, 'Vesna-Strivozha-cn/dsh-modpack-catalog', '目录来源要固定指向自建仓库')
-  assert.equal(st.data.config.showModpackMarket, true, '默认开启')
+  // 不假设「此刻一定是默认开」：使用者自己的 settings.json 可能已经关掉过（跑测试时用的就是它）。
+  // 先记下原值，验证关掉能落盘、再打开能落盘，最后还原。
+  const before = st.data.config.showModpackMarket !== false
   const off = await call('/dsh-modpack-kit/api/settings', { method: 'POST', body: { patch: { showModpackMarket: false } } })
   assert.equal(off.data.config.showModpackMarket, false, '能关掉')
-  await call('/dsh-modpack-kit/api/settings', { method: 'POST', body: { patch: { showModpackMarket: true } } })
+  const again = await call('/dsh-modpack-kit/api/status')
+  assert.equal(again.data.config.showModpackMarket, false, '关掉之后状态里也是关的')
+  const on = await call('/dsh-modpack-kit/api/settings', { method: 'POST', body: { patch: { showModpackMarket: true } } })
+  assert.equal(on.data.config.showModpackMarket, true, '能再打开')
+  if (!before) await call('/dsh-modpack-kit/api/settings', { method: 'POST', body: { patch: { showModpackMarket: false } } })
 })
 
 console.log(report.join('\n'))

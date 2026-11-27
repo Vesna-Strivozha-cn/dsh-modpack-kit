@@ -69,6 +69,30 @@ window.__ModuleLoader__.load({
       return () => placement.subs.delete(fn)
     }
 
+    // 「社区资源」这一栏开不开：设置里一关，标签要立刻消失，不能等重新拉状态。
+    // host 端的 /status 才是权威值，界面上先乐观一次，下次拉状态再对齐。
+    const marketVis = { value: true, subs: new Set() }
+    function readMarketVisible() { return marketVis.value !== false }
+    function setMarketVisible(on) {
+      const next = on !== false
+      const same = marketVis.value === next
+      marketVis.value = next
+      if (same) return
+      for (const fn of [...marketVis.subs]) { try { fn(next) } catch (e) { /* 一个订阅出错不该拖垮别的 */ } }
+    }
+    function subscribeMarketVisible(fn) {
+      marketVis.subs.add(fn)
+      return () => marketVis.subs.delete(fn)
+    }
+
+    // 最近一次确认过的配置：设置页来回切时会重新挂载，只读 props.status 会退回旧值
+    // （比如关掉「社区资源」再切回来，开关又亮着）。这里存一份，挂载时并上去。
+    const liveCfg = { value: null }
+    function mergeLiveConfig(next) {
+      if (!next || typeof next !== "object") return
+      liveCfg.value = { ...(liveCfg.value || {}), ...next }
+    }
+
     // 打包结果（含下载按钮）放在模块里：切页签、关掉面板都不丢，留到退出程序为止。
     const packStore = { value: null, subs: new Set() }
     function readPackValue() {
@@ -1925,7 +1949,7 @@ window.__ModuleLoader__.load({
 
     // ===== [区块] 页签四：设置与记录：SettingsPanel =====
     function SettingsPanel(props) {
-      const [cfg, setCfg] = useState(props.status ? props.status.config : null)
+      const [cfg, setCfg] = useState(() => ({ ...((props.status && props.status.config) || {}), ...(liveCfg.value || {}) }))
       const [saved, setSaved] = useState("")
       const [busy, setBusy] = useState(false)
       const [scanNag, fireScanNag] = useNag()
@@ -1954,7 +1978,13 @@ window.__ModuleLoader__.load({
         setBusy(true); setSaved("")
         try {
           const data = await api("/settings", { patch: p })
-          if (data && data.ok) { setCfg(data.config); setSaved("已保存") }
+          if (data && data.ok) {
+            setCfg(data.config)
+            mergeLiveConfig(data.config)
+            // 「社区资源」这一栏的开关键在这里：一关，标签立刻消失，不用等重新拉状态
+            if (Object.prototype.hasOwnProperty.call(p, "showModpackMarket")) setMarketVisible(data.config.showModpackMarket !== false)
+            setSaved("已保存")
+          }
           else setSaved((data && data.error) || "保存失败")
         } catch (e) {
           setSaved(e.message || String(e))
@@ -2691,6 +2721,9 @@ window.__ModuleLoader__.load({
         return () => { alive = false }
       }, [forceHideMarket])
       useEffect(() => subscribePack((value) => { setPackResult(value) }), [])
+      // 「社区资源」这一栏开不开：用模块级状态，设置里一关标签立刻消失，切回设置也不会又亮着
+      const [marketOn, setMarketOn] = useState(() => readMarketVisible())
+      useEffect(() => subscribeMarketVisible((on) => { setMarketOn(on) }), [])
       const savePackResult = (value) => {
         setPackValue(value)
         setPackResult(value)
@@ -2774,7 +2807,7 @@ window.__ModuleLoader__.load({
       const tabs = [
         ["pack", "打包"],
         ["install", "安装 / 导入"],
-        ...((status && status.config && status.config.showModpackMarket === false) ? [] : [["market", "社区资源"]]),
+        ...(marketOn ? [["market", "社区资源"]] : []),
         ["settings", "设置与记录"],
       ]
       const tabBtn = (key, text) => h("button", {
@@ -2880,6 +2913,7 @@ window.__ModuleLoader__.load({
           if (data && data.ok) {
             setStatus(data)
             setError("")
+            if (data.config) { mergeLiveConfig(data.config); setMarketVisible(data.config.showModpackMarket !== false) }
             if (data.placements) setPlacement(data.placements)
             setTries(0)
             return
@@ -2975,6 +3009,7 @@ window.__ModuleLoader__.load({
         try {
           const data = await api("/status")
           if (data && data.ok && data.placements) setPlacement(data.placements)
+          if (data && data.ok && data.config) { mergeLiveConfig(data.config); setMarketVisible(data.config.showModpackMarket !== false) }
           if (data && data.config && data.config.forceHideMarketSidebar === true) enforceMarketSidebarOff()
         } catch (e) {
           if (left > 0) setTimeout(() => { refreshPlacement(left - 1) }, 700 * (3 - left))
