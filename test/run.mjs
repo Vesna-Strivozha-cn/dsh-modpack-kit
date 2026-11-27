@@ -2104,6 +2104,18 @@ test('整合包市场：分类名助手要先定义再给分类下拉用（避�
   assert(cat < chips, 'catLabel 必须在 chips 之前定义，否则分类下拉一渲染就 ReferenceError')
 })
 
+test('打包版本按市场最新取，不再拿 versions 的第一个键；兼容建议跟打包策略走', () => {
+  const pack = fs.readFileSync(new URL('../lib/pack.mjs', import.meta.url), 'utf8')
+  assert(!/Object\.keys\(versions\)\[0\]/u.test(pack), '不能再用 versions 的第一个键当版本（那是最老的版本）')
+  assert(pack.includes("meta.meta['dist-tags']"), '取 dist-tags.latest')
+  assert(/parseSpecVersion/u.test(pack), '要从 名字@版本 里解析版本号')
+  const compat = fs.readFileSync(new URL('../lib/compat.mjs', import.meta.url), 'utf8')
+  assert(!compat.includes("没有 dsh 段"), '没有 dsh 段不再算建议')
+  assert(!compat.includes("not-bundle"), '去掉 not-bundle 判定')
+  assert(/const canCarry = format === 'full' \|\| format === 'hybrid'/u.test(compat), '建议按策略给')
+  assert(compat.includes('轻量包只记版本、不带别的东西'), '轻量包的依赖建议要写清楚')
+})
+
 for (const [state, name, detail] of results) {
   if (state === 'ok') console.log('ok   ' + name)
   else console.log('FAIL ' + name + '\n' + detail)

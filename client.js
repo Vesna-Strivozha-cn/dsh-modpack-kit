@@ -37,7 +37,7 @@ window.__ModuleLoader__.load({
     // 三种打包策略的介绍：服务端 /pack/plan 会给可用性与不可用原因，这里只做兜底展示
     const STRATEGY_INFO = [
       { id: "full", title: "完整包（懒人包）", online: false, note: "插件本体一起装进包，不联网也能装。有网时按市场版本装，装完依赖是 ^版本，插件市场认成市场版；离线才退回包内副本（显示本地安装）。可以带自定义配置与数据。" },
-      { id: "lite", title: "仅下载码（轻量包）", online: true, note: "只记 名字@版本，体积最小。安装时必须联网从市场取包，不带自定义配置与数据，插件市场按版本认成市场版。" },
+      { id: "lite", title: "轻量包（轻量包）", online: true, note: "只记 名字@版本，体积最小。安装时必须联网从市场取包，不带自定义配置与数据，插件市场按版本认成市场版。" },
       { id: "hybrid", title: "混合包（轻量为主 + 必要的完整）", online: true, note: "能按版本装的就只记 名字@版本（安装时联网取包）；没有确定版本、或者要带走本机改动的插件，连本体一起打进来（这部分安装时不用联网）。配置/数据/补丁片段照样带。" },
     ]
     // 分类以插件市场为准：id 与市场目录一致，中文名由 host 从市场目录里带回来。
@@ -1346,7 +1346,7 @@ window.__ModuleLoader__.load({
       return h("div", { style: { display: "flex", flexDirection: "column", gap: "14px" } },
         h(Notice, null,
           h("b", null, "打包：将所选插件封装为一个 .dshpack 文件"),
-          "　三种策略：完整包自带插件本体、不联网也能装；仅下载码只记版本、体积最小；混合包带版本与配置片段、体积接近仅下载码。完整包与混合包在安装前均不允许修改 profile 内容。",
+          "　三种策略：完整包自带插件本体、不联网也能装；轻量包只记版本、体积最小；混合包带版本与配置片段、体积接近轻量包。完整包与混合包在安装前均不允许修改 profile 内容。",
           status && status.market && status.market.installed
             ? h("div", { style: { ...hint, marginTop: "6px" } }, "已检测到插件市场 v" + status.market.version + "：本插件与其共用目录源与安装链路，但不依赖该插件，移除后打包与安装功能不受影响。")
             : h("div", { style: { ...hint, marginTop: "6px" } }, "未检测到插件市场，功能不受影响：打包、安装与检测均在本地完成。建议先安装 dshmarket 以获得分类、搜索与「切换市场版」入口；未安装时，首次使用请点击「建立目录索引」。"),
@@ -1465,7 +1465,7 @@ window.__ModuleLoader__.load({
           h(Switch, { checked: options.confirmLicense, label: "我确认所选插件的许可证允许再分发，或已获得作者授权", onChange: (v) => setOptions({ ...options, confirmLicense: v }) }),
           h("div", { style: row },
             h("button", { style: btnPrimary, disabled: picked.length === 0 || busy === "start" || Boolean(currentBlocked), onClick: doPack }, busy === "start" ? "提交中…" : (currentBlocked ? "先换个可用的策略" : `打包 ${picked.length} 个插件`)),
-            started ? h("span", { style: hint }, "已开始：" + started + "（进度在左下角，可以接着选别的再打一个）") : null,
+            started ? h("span", { style: hint }, "已开始：" + started + "（进度在悬浮窗，可以接着选别的再打一个）") : null,
             status ? h("span", { style: hint }, "DSH " + (status.dshVersion || "?") + " · profile " + status.profile) : null)),
         pausedRiskNodes.length ? h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "10px", borderColor: "#d9534f" } }, pausedRiskNodes) : null,
         error ? h(Notice, { tone: "bad" }, error) : null,

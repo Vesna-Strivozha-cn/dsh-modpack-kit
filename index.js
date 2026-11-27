@@ -263,7 +263,7 @@ export default {
         },
         {
           id: 'lite',
-          title: '仅下载码（轻量包）',
+          title: '轻量包（轻量包）',
           online: true,
           ok: liteBlockers.length === 0,
           reason: liteBlockers.map((b) => b.text).join('；'),
@@ -285,6 +285,7 @@ export default {
     }
 
     const compatFor = (manifest) => checkCompatibility(manifest.plugins, {
+      format: manifest && manifest.format,
       installed: installedOrEmpty(),
       dshVersion: (() => { try { return dshVersion(profileDir()) } catch { return '' } })(),
       nodeVersion: process.versions.node,
@@ -706,7 +707,7 @@ export default {
           scanGroups: result.scanGroups,
           report: result.report,
           notes: result.notes,
-          compat: checkCompatibility(result.manifest.plugins, { installed, dshVersion: dshVersionNow, nodeVersion: process.versions.node, config }),
+          compat: checkCompatibility(result.manifest.plugins, { installed, dshVersion: dshVersionNow, nodeVersion: process.versions.node, config, format: result.manifest && result.manifest.format }),
         }
       } catch (error) {
         if (error instanceof JobCancelled) {
