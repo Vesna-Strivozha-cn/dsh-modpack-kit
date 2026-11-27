@@ -205,10 +205,13 @@ for (const plugin of manifest.plugins || []) {
   // 需求：包里这份当初是从插件市场取的（source npm/market），安装时优先按市场版本装，
   // 取不到（离线 / registry 上没有这个版本）再退回包内自带的那份。
   const fromMarket = !offline && (plugin.source === 'npm' || plugin.source === 'market')
+  // 联网且清单里有确定的版本号时，先按「名字@版本」从市场装：这样 profile 依赖是 semver，
+  // 插件市场会认成市场版；失败（或断网）再退回包里自带的那份（file:，会显示本地安装）。
+  const versionOk = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/u.test(String(plugin.version || '')) && String(plugin.version) !== '0.0.0'
   const attempts = []
-  if (fromMarket) attempts.push({ spec: marketSpec, from: 'market' })
+  if (!offline && versionOk) attempts.push({ spec: marketSpec, from: 'market' })
   if (fileSpec) attempts.push({ spec: fileSpec, from: 'pack' })
-  if (!fromMarket && !fileSpec) attempts.push({ spec: marketSpec, from: 'market' })
+  if (!fileSpec && !offline) attempts.push({ spec: marketSpec, from: 'market' })
   if (attempts.length === 0) attempts.push({ spec: marketSpec, from: 'market' })
   if (offline && fileSpec) say('离线模式：直接用包里自带的那份（插件市场会显示成本地安装）')
   const runAdd = (spec) => {
