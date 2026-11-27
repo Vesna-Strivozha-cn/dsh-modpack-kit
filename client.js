@@ -2169,11 +2169,14 @@ window.__ModuleLoader__.load({
 
     const MARKET_SORTS = [["new", "最新"], ["downloads", "下载量"], ["size", "体积"], ["name", "名称"]]
     const MARKET_RULES = [
-      "只收轻量包（strategy: lite）：只记插件名与版本、不带插件本体，体积通常十几 KB；装的时候由本插件按版本联网取包。",
-      "每个整合包提交一份清单（data/packs/<id>.json）：名字、作者、分类、一句中文说明、插件与版本、包文件与 sha256。",
-      "包文件放仓库的 packs/ 目录，或放到你自己的 GitHub Release 再在清单里写直链；目录只存元数据，不搬别人的文件。",
-      "分类按使用场景：工作办公、性能优化、界面美化、实用功能、开发调试、娱乐休闲、学习资料、其它。",
-      "CI 每天重建一次目录；sha256 与大小对不上、或分类写错的条目会被构建挡下，不会进目录。",
+      "只收轻量包（strategy: lite）：只记插件名与版本、不带插件本体，十几 KB；装的人联网按版本取包。",
+      "第 1 步：在本插件「打包」页选「轻量包」、勾插件、打包并下载成 <名字>-<日期>-lite.dshpack。",
+      "第 2 步：算 sha256（Windows：certutil -hashfile 名字.dshpack SHA256；macOS/Linux：shasum -a 256 名字.dshpack），再记下字节数（≤ 64 MB）。",
+      "第 3 步：fork github.com/Vesna-Strivozha-cn/dsh-modpack-catalog，切一个分支，把包放进 packs/，再写一份 data/packs/<id>.json。",
+      "第 4 步：本地跑 node scripts/build.mjs，看到「packs.json: N 个整合包」才算过；报「构建失败」按提示改（多半是 sha256/size 对不上或分类写错）。",
+      "第 5 步：提交、push、开 PR；CI 会重跑构建，合并后每天 03:17 UTC 自动重建目录，也可以在 Actions 里手动 Run workflow 立刻扫一轮。",
+      "插件可以不写死版本：清单里写 { \"name\": \"dsh-context\", \"latest\": true }，安装时按名字取市场最新版（插件市场认市场版）；写 version 就必须是 x.y.z。",
+      "分类按使用场景：工作办公、性能优化、界面美化、实用功能、开发调试、娱乐休闲、学习资料、水槽（插件横跨三类以上会自动归这里）、其它。",
       "只提交你自己打的包，或者你有权再分发的插件组合；作者没写许可证的组合请先问作者。",
     ]
 
@@ -2366,8 +2369,8 @@ window.__ModuleLoader__.load({
           h("div", { style: { border: "1px dashed var(--dsw-alias-border-l2)", borderRadius: "8px", padding: "10px", display: "flex", flexDirection: "column", gap: "4px" } },
             h("span", { style: strong }, "清单长这样"),
             h("code", { style: { fontSize: "11.5px", whiteSpace: "pre-wrap", lineHeight: "17px" } },
-              '{\n  "id": "bili-trio",\n  "name": "B站三件套",\n  "author": "你的名字",\n  "category": "实用功能",\n  "version": "1.0.0",\n  "strategy": "lite",\n  "file": "bili-trio-lite.dshpack",\n  "sha256": "…64 位…",\n  "size": 12226,\n  "description": { "zh": "一句话说明" },\n  "plugins": [{ "name": "dsh-bili-whale", "version": "0.4.6" }]\n}')),
-          h("div", { style: hint }, "仓库：github.com/" + (summary && summary.repo ? summary.repo : "Vesna-Strivozha-cn/dsh-modpack-catalog") + " · 提 PR 即可，CI 每天重建目录。"))
+              '{\n  "id": "bili-trio",\n  "name": "B站三件套",\n  "author": "你的名字",\n  "category": "实用功能",\n  "version": "1.0.0",\n  "strategy": "lite",\n  "file": "bili-trio-lite.dshpack",\n  "sha256": "…64 位…",\n  "size": 12226,\n  "description": { "zh": "一句话说明", "en": "one line in English" },\n  "plugins": [{ "name": "dsh-bili-whale", "latest": true }]\n}')),
+          h("div", { style: hint }, "仓库：github.com/" + (summary && summary.repo ? summary.repo : "Vesna-Strivozha-cn/dsh-modpack-catalog") + " · 照着上面 1~5 步走：包进 packs/、清单进 data/packs/、本地 build 过了再提 PR；合并后每天 03:17 UTC 重建，也可以在 Actions 手动 Run workflow。"))
       }
 
       if (view === "detail" && detail) {

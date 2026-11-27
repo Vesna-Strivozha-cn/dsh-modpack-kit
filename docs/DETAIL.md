@@ -85,6 +85,8 @@ dsh plugin --profile desktop add github:Vesna-Strivozha-cn/dsh-modpack-kit
 
 
 
+上传流程：轻量包 → sha256/字节数 → fork 目录仓库 → `packs/` + `data/packs/<id>.json` → 本地 `scripts/build.mjs` → PR；合并后每日 03:17 UTC 重建或 Actions 手动 dispatch。插件条目可写 `{ "name": "x", "latest": true }`（安装取市场最新）。
+
 ## 与插件市场的兼容
 
 ||装了插件市场|没装|
