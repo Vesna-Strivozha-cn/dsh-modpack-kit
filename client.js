@@ -1488,7 +1488,7 @@ window.__ModuleLoader__.load({
           result.manifest && result.manifest.plugins && result.manifest.plugins.length
             ? h("div", { style: { display: "flex", flexDirection: "column", gap: "2px" } },
               result.manifest.plugins.map((p) => h("div", { key: p.name, style: mono },
-                "· " + p.name + "@" + p.version + "　" + (p.size ? bytes(p.size) : "") + ((p.mode === "local" || p.localEdits) ? "　[本地改动]" : "　[基础配置]") + (p.configIncluded ? "　[含配置]" : ""))))
+                "· " + p.name + (p.latest ? "@市场最新" : "@" + p.version) + "　" + (p.size ? bytes(p.size) : "") + ((p.mode === "local" || p.localEdits) ? "　[本地改动]" : "　[基础配置]") + (p.configIncluded ? "　[含配置]" : ""))))
             : null,
           result.compat ? h(CompatList, { compat: result.compat }) : null,
           result.notes && result.notes.length ? h("div", { style: { ...hint, maxHeight: "110px", overflow: "auto" } }, result.notes.map((n, i) => h("div", { key: i }, "· " + n))) : null,
@@ -1840,7 +1840,7 @@ window.__ModuleLoader__.load({
               return h("div", { key: p.name, style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap", padding: "4px 0", borderTop: "0.5px solid var(--dsw-alias-border-l2)" } },
                 h("input", { type: "checkbox", checked, onChange: () => setPickedNames((prev) => ({ ...prev, [p.name]: !checked })) }),
                 h("div", { style: { flex: "1 1 220px", minWidth: "170px" } },
-                  h("div", { style: label }, p.name, " ", h("span", { style: hint }, "@" + (p.version || "?"))),
+                  h("div", { style: label }, p.name, " ", h("span", { style: hint }, p.latest ? "@市场最新（装的时候按名字取）" : "@" + (p.version || "?"))),
                   h("div", { style: hint }, [p.localEdits ? "含本机修改" : "", p.configIncluded ? "有配置" : "", p.dataIncluded ? "有数据快照" : ""].filter(Boolean).join(" · ")),
                   row.problems.length ? h("div", { style: { ...hint, color: row.problems.some((f) => f.level === "error") ? "#ff6b6b" : "#ffb020" } },
                     row.problems.slice(0, 3).map((f) => "· " + f.message).join("；") + (row.problems.length > 3 ? "（还有 " + (row.problems.length - 3) + " 条）" : "")) : null),
@@ -2391,7 +2391,7 @@ window.__ModuleLoader__.load({
               : plugins.map((plugin) => h("div", { key: "p-" + plugin.name, style: { display: "flex", flexDirection: "column", gap: "2px", borderTop: "0.5px solid var(--dsw-alias-border-l2)", paddingTop: "6px" } },
                 h("div", { style: row },
                   h("span", { style: { fontSize: "12.5px", fontWeight: 600 } }, plugin.name),
-                  h(Tag, null, "@" + plugin.version)),
+                  h(Tag, null, plugin.version ? "@" + plugin.version : "@市场最新")),
                 h("span", { style: hint }, plugin.description || "作者没写这个插件的说明。"))),
             h("span", { style: hint }, "安装时按上面的版本从插件市场取包；取不到就明确报错，不会拿别的东西顶替。"),
             h("span", { style: hint }, "这里只数清单里的顶层插件；像壁纸引擎那样由插件自己带的一组组件不算在里面，装好后由那个插件自己管理。")),
