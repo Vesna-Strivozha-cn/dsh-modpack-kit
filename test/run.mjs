@@ -796,6 +796,12 @@ await testAsync('客户端组件在假 React 下能渲染（抓未定义变量�
   assert(Boolean(refreshBtnNode), "标签行里要有刷新按钮")
   await refreshBtnNode.props.onClick()
   assert(refreshCalls === 1, "点刷新应真的重新读一遍状态")
+  // 整合包市场面板：列表页与规则页都要能真正渲染（分类名与体量词条的助手写在前面，否则 TDZ 白屏）
+  const marketStatus = { ...status, config: { ...status.config, showModpackMarket: true }, modpackMarket: { present: true, count: 1, categories: [{ label: "实用功能", count: 1 }], repo: "Vesna-Strivozha-cn/dsh-modpack-catalog", ttlHours: 24 } }
+  render(mod.MarketPanel({ status: marketStatus, onGoInstall: () => {} }))
+  override.value = "rules"
+  override.used = false
+  render(mod.MarketPanel({ status: marketStatus, onGoInstall: () => {} }))
   render(mod.Home({ status: grouped }))
   render(mod.Icon({ size: 16 }))
   render(mod.Page({}))
@@ -2099,6 +2105,14 @@ test('体量词条与水槽：按插件总数自动分档，类型太杂归到�
   assert(/style: locale === "en" \? btnPrimary : btn/u.test(cli), '英文模式要高亮 English')
   assert(/const tr = \(key, vars\)/u.test(cli), 'tr 要支持占位替换')
   assert(!/cfg\.uiLocale === "en" \? btn/u.test(cli), '不要再拿 status 里的旧配置判高亮')
+})
+
+test('整合包市场：分类名助手要先定义再给分类下拉用（避免 TDZ 白屏）', () => {
+  const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  const cat = cli.indexOf('const catLabel = (name) =>')
+  const chips = cli.indexOf('const chips = [{ id: "all"')
+  assert(cat > 0 && chips > 0, '两个都要在')
+  assert(cat < chips, 'catLabel 必须在 chips 之前定义，否则分类下拉一渲染就 ReferenceError')
 })
 
 for (const [state, name, detail] of results) {

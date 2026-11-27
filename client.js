@@ -2440,17 +2440,6 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const categories = (summary && summary.categories) || []
-      const chips = [{ id: "all", label: "全部", count: (summary && summary.count) || 0 }].concat(
-        categories.map((c) => ({ id: c.label, label: catLabel(c.label), count: c.count || 0 })),
-      )
-      const present = Boolean(summary && summary.present)
-      const sizeText = (bytes) => (bytes >= 1024 * 1024 ? Math.round((bytes / 1024 / 1024) * 10) / 10 + " MB" : Math.max(1, Math.round(bytes / 1024)) + " KB")
-      const compact = (value) => {
-        const n = Number(value) || 0
-        return n >= 10000 ? (n / 10000).toFixed(1) + " 万" : String(n)
-      }
-      // 目录里没有图片资源，就用名字前两个字做一块底色方块，跟 PCL 那种「占位图标」一个意思
       // 分类英文名（目录里只存中文 label，英文界面在这里映射）
       const CATEGORY_EN = { 工作办公: "Office", 性能优化: "Performance", 界面美化: "Appearance", 实用功能: "Utilities", 开发调试: "Developer", 娱乐休闲: "Fun", 学习资料: "Learning", 水槽: "Everything bag", 其它: "Other" }
       const catLabel = (name) => (currentLocale() === "en" ? (CATEGORY_EN[name] || name) : name)
@@ -2468,6 +2457,17 @@ window.__ModuleLoader__.load({
         const info = tierInfo(pack)
         return h("span", { key: "tier-" + pack.id, style: { ...hint, color: info.color, border: "0.5px solid " + info.color, borderRadius: "99px", padding: "0 6px", lineHeight: "16px" } }, info.text)
       }
+      const categories = (summary && summary.categories) || []
+      const chips = [{ id: "all", label: currentLocale() === "en" ? "All" : "全部", count: (summary && summary.count) || 0 }].concat(
+        categories.map((c) => ({ id: c.label, label: catLabel(c.label), count: c.count || 0 })),
+      )
+      const present = Boolean(summary && summary.present)
+      const sizeText = (bytes) => (bytes >= 1024 * 1024 ? Math.round((bytes / 1024 / 1024) * 10) / 10 + " MB" : Math.max(1, Math.round(bytes / 1024)) + " KB")
+      const compact = (value) => {
+        const n = Number(value) || 0
+        return n >= 10000 ? (n / 10000).toFixed(1) + " 万" : String(n)
+      }
+      // 目录里没有图片资源，就用名字前两个字做一块底色方块，跟 PCL 那种「占位图标」一个意思
       const descOf = (pack) => {
         const d = (pack && pack.description) || {}
         const text = currentLocale() === "en" ? (d.en || d.zh) : (d.zh || d.en)
