@@ -199,9 +199,23 @@ export default {
       for (const [token, item] of pending) if (now - item.at > PENDING_TTL) pending.delete(token)
     }
 
+    // 读 profile 里的插件清单要遍历几百个包的 package.json，刷新时连着调十几次很慢：
+    // 这里按 profile 目录的 mtime 记住上一次结果，目录没变就直接复用（插件增删会改 mtime）
+    let installedMemo = { key: '', at: 0, value: [] };
     const installedOrEmpty = () => {
-      try { return listInstalled(profileDir()) } catch { return [] }
-    }
+      let key = '';
+      try {
+        const dir = profileDir();
+        const stat = fs.statSync(path.join(dir, 'package.json'));
+        key = dir + '|' + stat.mtimeMs + '|' + stat.size;
+      } catch { key = ''; }
+      const now = Date.now();
+      if (key && installedMemo.key === key && now - installedMemo.at < 5000) return installedMemo.value;
+      let value = [];
+      try { value = listInstalled(profileDir()) } catch { value = []; }
+      installedMemo = { key, at: now, value };
+      return value;
+    };
 
     // 三种策略能不能选：按「这次勾了哪些插件」实时算，客户端拿去做卡片灰显与原因弹窗；
     // 打包时也再算一遍，挡住「界面上换了插件、策略却没跟着变」的情况。
@@ -400,10 +414,15 @@ export default {
       json(res, 200, { ok: true, summary, ...first, page: 1, pageSize: config.catalogPageSize })
     })
 
+    // 整合包市场的检索同样按 key 缓存 20 秒：连按几个键不该每次都重新打分
+    const marketSearchCache = new Map()
     route('/dsh-modpack-kit/api/market/search', async (req, res) => {
       if (!needPost(req, res)) return
       const body = await readJsonBody(req)
       const installed = installedOrEmpty().filter((p) => p.isPlugin).map((p) => p.name)
+      const cacheKey = JSON.stringify([body.query || '', body.category || 'all', body.sort || 'new', body.page || 1, body.pageSize || 20, installed.length])
+      const cached = marketSearchCache.get(cacheKey)
+      if (cached && Date.now() - cached.at < 20000) { json(res, 200, cached.data); return }
       try {
         const data = searchMarket(config, {
           query: body.query,
@@ -413,6 +432,8 @@ export default {
           sort: body.sort,
           installed,
         })
+        marketSearchCache.set(cacheKey, { at: Date.now(), data })
+        if (marketSearchCache.size > 40) marketSearchCache.delete(marketSearchCache.keys().next().value)
         json(res, 200, data)
       } catch (e) {
         json(res, 200, { ok: false, error: String((e && e.message) || e), items: [], total: 0 })

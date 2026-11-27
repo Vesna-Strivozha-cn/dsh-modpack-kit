@@ -350,8 +350,20 @@ function restoreGroups() {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) raw = {}
   const groups = raw.groups && typeof raw.groups === 'object' && !Array.isArray(raw.groups) ? { ...raw.groups } : {}
   const order = Array.isArray(raw.groupOrder) ? raw.groupOrder.filter((x) => typeof x === 'string') : []
+  // 重名避让：groupOrigins 记着每个组是哪个包建的；不同包撞名时依次加「 2」「 3」
+  const origins = raw.groupOrigins && typeof raw.groupOrigins === 'object' && !Array.isArray(raw.groupOrigins) ? { ...raw.groupOrigins } : {}
+  const packKey = String(manifest.id || manifest.name || '')
+  const renamed = []
   const parts = []
-  for (const [name, members] of adds) {
+  for (const [rawName, members] of adds) {
+    let name = rawName
+    const owner = typeof origins[name] === 'string' ? origins[name] : ''
+    if (groups[name] !== undefined && owner !== '' && packKey !== '' && owner !== packKey) {
+      let index = 2
+      while (groups[name + ' ' + index] !== undefined) index += 1
+      renamed.push(rawName + ' → ' + name + ' ' + index)
+      name = name + ' ' + index
+    }
     const current = Array.isArray(groups[name]) ? groups[name].filter((x) => typeof x === 'string') : []
     let added = 0
     for (const member of members) {
@@ -362,11 +374,14 @@ function restoreGroups() {
     if (added === 0 && groups[name] !== undefined) continue
     groups[name] = current
     if (!order.includes(name)) order.push(name)
+    if (!origins[name]) origins[name] = packKey
     parts.push(name + '（+' + added + '）')
   }
   if (parts.length === 0) return { applied: '', skipped: '' }
   raw.groups = groups
   raw.groupOrder = order
+  raw.groupOrigins = origins
+  if (renamed.length > 0) say('分组重名，已避让：' + renamed.join('、'))
   if (!dryRun) {
     try {
       fs.writeFileSync(stateFile, JSON.stringify(raw, null, 2) + '\n', 'utf8')

@@ -16,7 +16,7 @@ import { inspectPackBuffer, installPack } from '../lib/install.mjs'
 import { DEFAULT_CONFIG, clampConfig, appendHistory, readHistory, clearHistory, removeHistory } from '../lib/store.mjs'
 import { listInstalled } from '../lib/profile.mjs'
 import { assertAllowedUrl, parseCurlResponse, NET_DEFAULTS } from '../lib/net.mjs'
-import { readMarketGroups, groupViews } from '../lib/groups.mjs'
+import { readMarketGroups, groupViews, applyMarketGroups } from '../lib/groups.mjs'
 import { marketSummary, searchMarket, findMarketPack } from '../lib/modpack-catalog.mjs'
 
 const results = []
@@ -1850,7 +1850,7 @@ test('标签行：刷新按钮和「设置与记录」同一行、排在最右�
   assert(cli.includes('envLine, refreshNote ? h("span"'), '刷新的结果说明要显示在标签行里')
   assert(cli.includes('refreshMsg ? h("span"'), '刷新失败原因要显示在标签行里')
   assert(cli.includes('refreshBtn)'), '刷新按钮要排在标签行末尾')
-  assert(cli.includes('refreshing ? "刷新中…"'), '刷新中要有反馈')
+  assert(cli.includes('refreshing ? tr("refreshing")'), '刷新中要有反馈（走 i18n）')
   assert(cli.includes('重新读一遍插件列表、市场目录与进度窗'), '悬浮要说明刷新做了什么')
   assert(cli.includes('setGen((n) => n + 1)'), '刷新后要让面板重挂，否则看起来像没反应')
   assert(cli.includes('key: "pack-" + gen'), '面板要用 gen 当 key')
@@ -1992,7 +1992,7 @@ test('整合包市场：目录形状、检索、分类与分页都在服务端�
 test('整合包市场：页面入口、下载交接、附属开关与规则页都在', () => {
   const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   assert(cli.includes('function MarketPanel(props)'), '要有独立的整合包市场面板')
-  assert(cli.includes('["market", "整合包市场"]'), '标签行要多一栏')
+  assert(cli.includes('["market", tr("market")]'), '标签行要多一栏')
   assert(cli.includes('showModpackMarket === false'), '设置里关掉就不显示那一栏')
   assert(cli.includes('const installRequest = { value: null, subs: new Set() }'), '市场到安装页只交接一次')
   assert(cli.includes('requestInstall({ token: data.token, fileName: data.fileName, packName: pack.name })'), '下载完把 token 递过去')
@@ -2037,6 +2037,45 @@ test('curl 兜底要保留原始字节（中文 JSON 不能被重新编码）', 
   const src = fs.readFileSync(new URL('../lib/net.mjs', import.meta.url), 'utf8')
   assert(src.includes("encoding: 'buffer'"), 'execFile 必须拿 Buffer，而不是先解成字符串')
   assert(!src.includes("Buffer.from(stdout, 'latin1')"), '不要再用 latin1 把字符串转回 Buffer')
+})
+
+test('分组重名：不同包用同一个组名时，后来者加数字后缀，同一个包再装不重复建组', () => {
+  const profile = tmpDir('group-rename')
+  fs.mkdirSync(path.join(profile, '.dsh-market'), { recursive: true })
+  fs.writeFileSync(path.join(profile, '.dsh-market', 'state.json'), JSON.stringify({ groups: {}, groupOrder: [] }), 'utf8')
+  const first = applyMarketGroups(profile, { 日常: ['dsh-context'] }, { packKey: 'pack-a' })
+  assert(first.changed === true, '第一次要写进去')
+  const second = applyMarketGroups(profile, { 日常: ['dsh-ops'] }, { packKey: 'pack-b' })
+  assert(second.changed === true, '第二个包也要写进去')
+  assert(Boolean(second.renames && second.renames['日常']), '撞名要报出改名')
+  const state = JSON.parse(fs.readFileSync(path.join(profile, '.dsh-market', 'state.json'), 'utf8'))
+  assert(Array.isArray(state.groups['日常']) && state.groups['日常'].includes('dsh-context'), '原来的组不能被动')
+  assert(Array.isArray(state.groups['日常 2']) && state.groups['日常 2'].includes('dsh-ops'), '撞名的要落到「日常 2」')
+  assert(state.groupOrigins['日常'] === 'pack-a' && state.groupOrigins['日常 2'] === 'pack-b', '来源要分开记')
+  const again = applyMarketGroups(profile, { 日常: ['dsh-whale-widget'] }, { packKey: 'pack-a' })
+  assert(again.changed === true, '同一个包再装要能并进原组')
+  const after = JSON.parse(fs.readFileSync(path.join(profile, '.dsh-market', 'state.json'), 'utf8'))
+  assert(after.groups['日常'].includes('dsh-whale-widget'), '同源并回「日常」')
+  assert(after.groups['日常 3'] === undefined, '不该再建新组')
+})
+
+test('下载量与语言：只算安装文件本身，界面语言可切、英文优先英文说明', () => {
+  const catalog = fs.readFileSync(new URL('../lib/modpack-catalog.mjs', import.meta.url), 'utf8')
+  assert(/downloads: Number\(pack\.downloads\) \|\| 0/u.test(catalog), '下载量只认条目自己的字段，没有就是 0')
+  assert(!/npmWeekDownloads|last-week/u.test(catalog), '不能把包内插件的 npm 下载量加起来')
+  assert(/updatedAt: String\(pack\.updatedAt/u.test(catalog), '要有上次更新时间')
+  const builder = fs.readFileSync(new URL('../../_market/modpack-catalog/scripts/build.mjs', import.meta.url), 'utf8')
+  assert(/缺少 description\.en/u.test(builder), '上传要双语：en 缺失要报错')
+  assert(!/last-week/u.test(builder), '构建脚本不再查插件下载量')
+  const store = fs.readFileSync(new URL('../lib/store.mjs', import.meta.url), 'utf8')
+  assert(/uiLocale: 'zh'/u.test(store), '默认中文')
+  assert(/cfg\.uiLocale = cfg\.uiLocale === 'en'/u.test(store), '只认 zh/en')
+  const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  for (const piece of ['localeStore', 'const setLocale', 'const tr =', 'const useLocale', '"English"', 'tr("marketSearch")', 'tr("downloadInstall")', 'const descOf']) {
+    assert(cli.includes(piece), '缺少：' + piece)
+  }
+  assert(/cfg\.uiLocale === "en" \? btnPrimary : btn/u.test(cli), '语言按钮要跟着当前语言高亮')
+  assert(/currentLocale\(\) === "en" \? \(d\.en \|\| d\.zh\)/u.test(cli), '英文界面优先英文说明')
 })
 
 for (const [state, name, detail] of results) {
