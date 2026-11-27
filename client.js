@@ -2172,10 +2172,11 @@ window.__ModuleLoader__.load({
       "只收轻量包（strategy: lite）：只记插件名与版本、不带插件本体，十几 KB；装的人联网按版本取包。",
       "第 1 步：在本插件「打包」页选「轻量包」、勾插件、打包并下载成 <名字>-<日期>-lite.dshpack。",
       "第 2 步：算 sha256（Windows：certutil -hashfile 名字.dshpack SHA256；macOS/Linux：shasum -a 256 名字.dshpack），再记下字节数（≤ 64 MB）。",
-      "第 3 步：fork github.com/Vesna-Strivozha-cn/dsh-modpack-catalog，切一个分支，把包放进 packs/，再写一份 data/packs/<id>.json。",
+      "第 3 步：fork github.com/Vesna-Strivozha-cn/dsh-modpack-catalog，切一个分支，把包放进 packs/，再写一份 data/packs/<id>.json（只写 id、类型、文件名、sha256、日期）。",
       "第 4 步：本地跑 node scripts/build.mjs，看到「packs.json: N 个整合包」才算过；报「构建失败」按提示改（多半是 sha256/size 对不上或分类写错）。",
       "第 5 步：提交、push、开 PR；CI 会重跑构建，合并后每天 03:17 UTC 自动重建目录，也可以在 Actions 里手动 Run workflow 立刻扫一轮。",
-      "插件可以不写死版本：清单里写 { \"name\": \"dsh-context\", \"latest\": true }，安装时按名字取市场最新版（插件市场认市场版）；写 version 就必须是 x.y.z。",
+      "条目里不要写介绍、名称、作者、插件清单：目录直接显示包内 dsh-modpack.json（也就是打包那一刻填的内容），写了两边会不一致，构建会挡下。",
+      "包内插件可以不写死版本：清单里写 { \"name\": \"dsh-context\", \"latest\": true }，安装时按名字取市场最新版（插件市场认市场版）；写 version 就必须是 x.y.z。",
       "分类按使用场景：工作办公、性能优化、界面美化、实用功能、开发调试、娱乐休闲、学习资料、水槽（插件横跨三类以上会自动归这里）、其它。",
       "只提交你自己打的包，或者你有权再分发的插件组合；作者没写许可证的组合请先问作者。",
     ]
@@ -2369,7 +2370,7 @@ window.__ModuleLoader__.load({
           h("div", { style: { border: "1px dashed var(--dsw-alias-border-l2)", borderRadius: "8px", padding: "10px", display: "flex", flexDirection: "column", gap: "4px" } },
             h("span", { style: strong }, "清单长这样"),
             h("code", { style: { fontSize: "11.5px", whiteSpace: "pre-wrap", lineHeight: "17px" } },
-              '{\n  "id": "bili-trio",\n  "name": "B站三件套",\n  "author": "你的名字",\n  "category": "实用功能",\n  "version": "1.0.0",\n  "strategy": "lite",\n  "file": "bili-trio-lite.dshpack",\n  "sha256": "…64 位…",\n  "size": 12226,\n  "description": { "zh": "一句话说明", "en": "one line in English" },\n  "plugins": [{ "name": "dsh-bili-whale", "latest": true }]\n}')),
+              '{\n  "id": "bili-trio",\n  "category": "实用功能",\n  "file": "bili-trio-lite.dshpack",\n  "sha256": "…64 位…",\n  "createdAt": "2026-11-27",\n  "updatedAt": "2026-11-27",\n  "homepage": ""\n}\n\n// 名称、作者、介绍、插件清单不写在这里：\n// 全部取包里的 dsh-modpack.json（打包时填的）')),
           h("div", { style: hint }, "仓库：github.com/" + (summary && summary.repo ? summary.repo : "Vesna-Strivozha-cn/dsh-modpack-catalog") + " · 照着上面 1~5 步走：包进 packs/、清单进 data/packs/、本地 build 过了再提 PR；合并后每天 03:17 UTC 重建，也可以在 Actions 手动 Run workflow。"))
       }
 

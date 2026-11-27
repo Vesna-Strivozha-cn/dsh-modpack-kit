@@ -70,7 +70,7 @@ dsh plugin --profile desktop add github:Vesna-Strivozha-cn/dsh-modpack-kit
 - 水槽：构建时把包里每个插件映射到插件市场分类，跨 ≥3 类就强制 `category = 水槽`，避免「什么都有」的包被塞进单一场景。
 - 条目字段：id / name / author / category / version / strategy（只收 lite）/ file / sha256 / size / createdAt / updatedAt / description{zh,en} / plugins[{name,version,description}] / downloads。
 - downloads 指这个 .dshpack 安装文件本身被下载的次数；目录只存元数据、不搬文件。Git 仓库里的文件没有逐文件计数，作者不写这个字段时客户端显示「下载量未统计」，绝不用包里插件的 npm 下载量顶替；托管到 GitHub Release 并写 download_count 就会原样显示。
-- 上传要求中英双语：description.zh 与 description.en 都必填，构建脚本会挡。
+- 上传时条目只写定位字段（id/类型/文件名/sha256/日期）；介绍、名称、作者、插件清单全部取自包内 `dsh-modpack.json`，也就是打包那一刻填的内容——目录里显示什么，取决于打包时写了什么。
 - 插件数只算清单里的顶层插件；壁纸引擎那类由插件自己带的组件不计入。
 - 检索：目录 JSON 按文件的 mtime+size 做内存缓存，每条预算一份小写 searchText；命中查询时先做包含过滤再打分，服务端对同一组条件再缓存 20 秒。
 - 分组写入：.dsh-market/state.json 里新增 groupOrigins（组名 → 创建它的包）；同名组属于别的包时依次试「名字 2」「名字 3」，安装日志会写明避让结果。
@@ -85,7 +85,7 @@ dsh plugin --profile desktop add github:Vesna-Strivozha-cn/dsh-modpack-kit
 
 
 
-上传流程：轻量包 → sha256/字节数 → fork 目录仓库 → `packs/` + `data/packs/<id>.json` → 本地 `scripts/build.mjs` → PR；合并后每日 03:17 UTC 重建或 Actions 手动 dispatch。插件条目可写 `{ "name": "x", "latest": true }`（安装取市场最新）。
+上传流程：轻量包 → sha256/字节数 → fork 目录仓库 → `packs/` + `data/packs/<id>.json`（定位字段）→ 本地 `scripts/build.mjs` → PR；合并后每日 03:17 UTC 重建或 Actions 手动 dispatch。构建会打开包读 `dsh-modpack.json`：名称、作者、介绍、插件清单都以它为准，包里插件可写 `{ "name": "x", "latest": true }`（安装取市场最新）。
 
 ## 与插件市场的兼容
 

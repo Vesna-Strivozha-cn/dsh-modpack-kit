@@ -2005,6 +2005,8 @@ test('整合包市场：页面入口、下载交接、附属开关与规则页�
   assert(cli.includes('api("/inspect", { token: payload.token })'), '安装页接到之后仍走原来的识别')
   assert(cli.includes('上传方式与规则'), '规则要有独立页面')
   assert(cli.includes('只收轻量包（strategy: lite）'), '规则里要写明当前只收轻量包')
+  assert(cli.includes('条目里不要写介绍、名称、作者、插件清单'), '规则要写明介绍取自包内 dsh-modpack.json，不写在条目里')
+  assert(!cli.includes('"name": "B站三件套"'), '清单示例不该再示范在条目里写 name/description，避免两套说法')
   assert(cli.includes('下载码'), '详情页要有下载码（直链 + sha256）')
   assert(cli.includes('这个整合包是做什么的'), '详情里要有整合包介绍')
   assert(cli.includes('包含的插件（这些插件会干什么）'), '要列出包内插件与用途')

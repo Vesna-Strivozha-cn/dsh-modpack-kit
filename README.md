@@ -74,7 +74,7 @@ npm 包页：<https://www.npmjs.com/package/dsh-modpack-kit>（不想装 npm 的
 
 插件页多一栏「社区资源」：浏览别人上传的整合包，看它包含哪些插件、各自干什么，然后一次装上。这是插件的附属功能，**自带、默认开启**，可以在设置里关掉（关掉只是不显示那一栏）。
 
-上传流程：轻量包打好 → 算 sha256 与字节数 → fork `github.com/Vesna-Strivozha-cn/dsh-modpack-catalog` → 包放 `packs/`、清单放 `data/packs/<id>.json` → 本地 `node scripts/build.mjs` 过一遍 → 提 PR。插件可以不写死版本（`{ "name": "x", "latest": true }`，安装时取市场最新）；合并后每天 03:17 UTC 重建目录，也可以在 Actions 里手动 `Run workflow` 立刻扫一轮。
+上传流程：轻量包打好 → 算 sha256 与字节数 → fork `github.com/Vesna-Strivozha-cn/dsh-modpack-catalog` → 包放 `packs/`、定位清单放 `data/packs/<id>.json`（只写 id、类型、文件名、sha256、日期）→ 本地 `node scripts/build.mjs` 过一遍 → 提 PR。**介绍、名称、作者、插件清单都不写在条目里**：目录直接读包里 `dsh-modpack.json`（也就是打包时填的那段），写两套会被构建挡下。插件可以不写死版本（`{ "name": "x", "latest": true }`，安装时取市场最新）；合并后每天 03:17 UTC 重建目录，也可以在 Actions 里手动 `Run workflow` 立刻扫一轮。
 
 * **目录**：来自自建仓库 [`dsh-modpack-catalog`](https://github.com/Vesna-Strivozha-cn/dsh-modpack-catalog)，GitHub Actions 一天一轮询重建；插件读仓库里的 `packs.json`（jsDelivr 与 raw 两个源都取，按构建时间用更新的那份）。
 * **检索**：分类（工作办公 / 性能优化 / 界面美化 / 实用功能 / 开发调试 / 娱乐休闲 / 学习资料 / 其它）、关键词、排序（最新 / 下载量 / 体积 / 名称）都在服务端算，已装的排前面。
