@@ -1856,7 +1856,7 @@ test('标签行：刷新按钮和「设置与记录」同一行、排在最右�
   assert(cli.includes('envLine, refreshNote ? h("span"'), '刷新的结果说明要显示在标签行里')
   assert(cli.includes('refreshMsg ? h("span"'), '刷新失败原因要显示在标签行里')
   assert(cli.includes('refreshBtn)'), '刷新按钮要排在标签行末尾')
-  assert(cli.includes('refreshing ? tr("refreshing")'), '刷新中要有反馈（走 i18n）')
+  assert(cli.includes('refreshing ? "刷新中…"'), '刷新中要有反馈')
   assert(cli.includes('重新读一遍插件列表、市场目录与进度窗'), '悬浮要说明刷新做了什么')
   assert(cli.includes('setGen((n) => n + 1)'), '刷新后要让面板重挂，否则看起来像没反应')
   assert(cli.includes('key: "pack-" + gen'), '面板要用 gen 当 key')
@@ -1998,7 +1998,7 @@ test('整合包市场：目录形状、检索、分类与分页都在服务端�
 test('整合包市场：页面入口、下载交接、附属开关与规则页都在', () => {
   const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   assert(cli.includes('function MarketPanel(props)'), '要有独立的整合包市场面板')
-  assert(cli.includes('["market", tr("market")]'), '标签行要多一栏')
+  assert(cli.includes('["market", "整合包市场"]'), '标签行要多一栏')
   assert(cli.includes('showModpackMarket === false'), '设置里关掉就不显示那一栏')
   assert(cli.includes('const installRequest = { value: null, subs: new Set() }'), '市场到安装页只交接一次')
   assert(cli.includes('requestInstall({ token: data.token, fileName: data.fileName, packName: pack.name })'), '下载完把 token 递过去')
@@ -2065,25 +2065,18 @@ test('分组重名：不同包用同一个组名时，后来者加数字后缀�
   assert(after.groups['日常 3'] === undefined, '不该再建新组')
 })
 
-test('下载量与语言：只算安装文件本身，界面语言可切、英文优先英文说明', () => {
+test('下载量按安装文件本身算，语言切换相关代码已全部移除', () => {
   const catalog = fs.readFileSync(new URL('../lib/modpack-catalog.mjs', import.meta.url), 'utf8')
-  assert(/downloads: Number\(pack\.downloads\) \|\| 0/u.test(catalog), '下载量只认条目自己的字段，没有就是 0')
-  assert(!/npmWeekDownloads|last-week/u.test(catalog), '不能把包内插件的 npm 下载量加起来')
-  assert(/updatedAt: String\(pack\.updatedAt/u.test(catalog), '要有上次更新时间')
-  const builder = fs.readFileSync(new URL('../../_market/modpack-catalog/scripts/build.mjs', import.meta.url), 'utf8')
-  assert(/缺少 description\.en/u.test(builder), '上传要双语：en 缺失要报错')
-  assert(!/last-week/u.test(builder), '构建脚本不再查插件下载量')
+  assert(/downloads: Number\.isFinite\(Number\(pack\.downloads\)\)/u.test(catalog), '下载量只认条目自己的字段，没有就存 null')
   const store = fs.readFileSync(new URL('../lib/store.mjs', import.meta.url), 'utf8')
-  assert(/uiLocale: 'zh'/u.test(store), '默认中文')
-  assert(/cfg\.uiLocale = cfg\.uiLocale === 'en'/u.test(store), '只认 zh/en')
+  assert(!store.includes('uiLocale'), '配置里不该再有 uiLocale')
   const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
-  for (const piece of ['localeStore', 'const setLocale', 'const tr =', 'const useLocale', '"English"', 'tr("marketSearch")', 'tr("downloadInstall")', 'const descOf']) {
-    assert(cli.includes(piece), '缺少：' + piece)
+  for (const gone of ['localeStore', 'setLocale', 'useLocale', 'uiLocale', 'Interface language']) {
+    assert(!cli.includes(gone), '语言切换要彻底去掉，不能再留：' + gone)
   }
-  assert(/locale === "en" \? btnPrimary : btn/u.test(cli), '语言按钮要跟着当前语言高亮')
-  assert(/currentLocale\(\) === "en" \? \(d\.en \|\| d\.zh\)/u.test(cli), '英文界面优先英文说明')
+  assert(/const descOf = \(pack\) => \{/u.test(cli), '说明取中文优先')
+  assert(cli.includes('下载量未统计'), '没有计数渠道就显示未统计，不能假装 0')
 })
-
 test('体量词条与水槽：按插件总数自动分档，类型太杂归到水槽，语言切换立刻生效', () => {
   const catalog = fs.readFileSync(new URL('../lib/modpack-catalog.mjs', import.meta.url), 'utf8')
   assert(/export function tierOf/u.test(catalog), '体量档位要有纯函数')
@@ -2097,14 +2090,10 @@ test('体量词条与水槽：按插件总数自动分档，类型太杂归到�
   assert(builder.includes("pack.category = '水槽'"), '三种以上场景就归到水槽')
   assert(/kinds.size >= 3/u.test(builder), '水槽判定看插件分类种类数')
   const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
-  for (const piece of ['const tierInfo', 'const tierTag', 'TIER_KEYS', 'tierSmall', 'tierHuge', 'const catLabel', 'CATEGORY_EN']) {
+  for (const piece of ['const tierInfo', 'const tierTag', 'TIER_LABELS', '轻量', '大宗']) {
     assert(cli.includes(piece), '缺少：' + piece)
   }
   // 语言按钮高亮跟当前语言走：切页回来不能停在中文
-  assert(/const locale = useLocale\(\)/u.test(cli), '设置面板要订阅当前语言')
-  assert(/style: locale === "en" \? btnPrimary : btn/u.test(cli), '英文模式要高亮 English')
-  assert(/const tr = \(key, vars\)/u.test(cli), 'tr 要支持占位替换')
-  assert(!/cfg\.uiLocale === "en" \? btn/u.test(cli), '不要再拿 status 里的旧配置判高亮')
 })
 
 test('整合包市场：分类名助手要先定义再给分类下拉用（避免 TDZ 白屏）', () => {

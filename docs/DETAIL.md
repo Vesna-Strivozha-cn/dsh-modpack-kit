@@ -62,15 +62,15 @@ dsh plugin --profile desktop add github:Vesna-Strivozha-cn/dsh-modpack-kit
 
 ## 整合包市场
 
+界面不带语言切换，只提供中文。
+
 - 体量词条：按插件总数自动判定（0-3 轻量 / 4-8 中型 / 9-12 大型 / 13+ 大宗），目录条目里存成 `tier`，客户端只用不猜。
 - 水槽：构建时把包里每个插件映射到插件市场分类，跨 ≥3 类就强制 `category = 水槽`，避免「什么都有」的包被塞进单一场景。
-- 语言：`config.uiLocale` 只影响本插件的界面与本地文案；整合包说明优先 `description.en`。
 - 条目字段：id / name / author / category / version / strategy（只收 lite）/ file / sha256 / size / createdAt / updatedAt / description{zh,en} / plugins[{name,version,description}] / downloads。
-- downloads 指这个 .dshpack 安装文件本身被下载的次数；目录只存元数据、不搬文件，所以没有可靠计数渠道时就是 0，不会把包里插件的 npm 下载量相加。
+- downloads 指这个 .dshpack 安装文件本身被下载的次数；目录只存元数据、不搬文件。Git 仓库里的文件没有逐文件计数，作者不写这个字段时客户端显示「下载量未统计」，绝不用包里插件的 npm 下载量顶替；托管到 GitHub Release 并写 download_count 就会原样显示。
 - 上传要求中英双语：description.zh 与 description.en 都必填，构建脚本会挡。
 - 插件数只算清单里的顶层插件；壁纸引擎那类由插件自己带的组件不计入。
 - 检索：目录 JSON 按文件的 mtime+size 做内存缓存，每条预算一份小写 searchText；命中查询时先做包含过滤再打分，服务端对同一组条件再缓存 20 秒。
-- 界面语言：config.uiLocale（zh / en，默认 zh），设置页最上面切换；切了之后条目说明优先显示对应语言，缺了就回落另一种。
 - 分组写入：.dsh-market/state.json 里新增 groupOrigins（组名 → 创建它的包）；同名组属于别的包时依次试「名字 2」「名字 3」，安装日志会写明避让结果。
 
 目录仓库 `Vesna-Strivozha-cn/dsh-modpack-catalog`（GitHub Actions `17 3 * * *` 一天一轮询）。
