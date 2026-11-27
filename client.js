@@ -2185,6 +2185,7 @@ window.__ModuleLoader__.load({
       const [detail, setDetail] = useState(null)
       const [downloading, setDownloading] = useState(false)
       const [reloadKey, setReloadKey] = useState(0)
+      const [searchTick, setSearchTick] = useState(0)
       const mounted = useRef(true)
       useEffect(() => () => { mounted.current = false }, [])
 
@@ -2221,7 +2222,7 @@ window.__ModuleLoader__.load({
             .finally(() => { if (alive) setSearching(false) })
         }, 240)
         return () => { alive = false; clearTimeout(timer) }
-      }, [query, category, sort])
+      }, [query, category, sort, searchTick])
 
       const loadMore = async () => {
         if (!hasMore || searching) return
@@ -2274,6 +2275,46 @@ window.__ModuleLoader__.load({
       const present = Boolean(summary && summary.present)
       const totalDownloads = items.reduce((sum, item) => sum + (Number(item.downloads) || 0), 0)
       const sizeText = (bytes) => (bytes >= 1024 * 1024 ? Math.round((bytes / 1024 / 1024) * 10) / 10 + " MB" : Math.max(1, Math.round(bytes / 1024)) + " KB")
+      const compact = (value) => {
+        const n = Number(value) || 0
+        return n >= 10000 ? (n / 10000).toFixed(1) + " 万" : String(n)
+      }
+      // 目录里没有图片资源，就用名字前两个字做一块底色方块，跟 PCL 那种「占位图标」一个意思
+      const CATEGORY_TINT = { 工作办公: "#4C7DF0", 性能优化: "#2bb673", 界面美化: "#a855f7", 实用功能: "#0ea5e9", 开发调试: "#f59e0b", 娱乐休闲: "#ec4899", 学习资料: "#14b8a6", 其它: "#64748b" }
+      const initialsOf = (name) => String(name || "?").replace(/\s+/gu, "").slice(0, 2) || "?"
+      const renderRow = (pack) => {
+        const tint = CATEGORY_TINT[pack.category] || "#64748b"
+        const plugins = pack.plugins || []
+        const meta = []
+        meta.push(plugins.length + " 个插件")
+        meta.push(sizeText(pack.size))
+        meta.push("下载 " + compact(pack.downloads))
+        if (pack.author) meta.push("作者 " + pack.author)
+        if (summary && summary.builtAt) meta.push("构建于 " + String(summary.builtAt).slice(0, 10))
+        return h("div", {
+          key: "pack-" + pack.id,
+          onClick: () => { setDetail(pack); setView("detail"); setError(""); setMsg("") },
+          style: { display: "flex", gap: "10px", padding: "10px 12px", borderTop: "0.5px solid var(--dsw-alias-border-l2)", cursor: "pointer", alignItems: "flex-start" },
+        },
+          h("div", {
+            style: {
+              width: "42px", height: "42px", flexShrink: 0, borderRadius: "8px",
+              background: tint, color: "#fff", fontSize: "13px", fontWeight: 600,
+              display: "flex", alignItems: "center", justifyContent: "center", letterSpacing: "0.5px",
+            },
+          }, initialsOf(pack.name)),
+          h("div", { style: { flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "3px" } },
+            h("div", { style: row },
+              h("span", { style: { fontWeight: 600, fontSize: "13.5px" } }, pack.name),
+              h(Tag, null, pack.category || "其它"),
+              h(Tag, null, "轻量"),
+              h(Tag, null, "v" + pack.version),
+              pack.installed && pack.installed.all ? h("span", { style: { ...hint, color: "#2bb673" } }, "已装") : null,
+              pack.installed && pack.installed.some && !pack.installed.all ? h("span", { style: hint }, "部分已装") : null),
+            h("span", { style: { ...hint, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", lineHeight: "18px" } }, (pack.description && pack.description.zh) || "作者没写说明。"),
+            h("div", { style: { ...row, gap: "14px" } }, meta.map((line, index) => h("span", { key: "meta-" + pack.id + "-" + index, style: hint }, line)))))
+      }
+      const resetFilters = () => { setQuery(""); setCategory("all"); setSort("new"); setPage(1); setSearchTick((n) => n + 1) }
 
       const head = h("div", { style: { ...row, justifyContent: "space-between" } },
         h("div", { style: row },
@@ -2338,95 +2379,68 @@ window.__ModuleLoader__.load({
             h("span", { style: hint }, "下载后在内存里校验 sha256、跑一遍安全检测，再转到安装页读取；半成品不会留在磁盘上。")))
       }
 
+      const searchCard = h("div", {
+        style: { border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "10px", padding: "12px", display: "flex", flexDirection: "column", gap: "10px" },
+      },
+        h("div", { style: { ...row, justifyContent: "space-between" } },
+          h("span", { style: { ...strong, fontSize: "13px" } }, "搜索整合包"),
+          h("span", { style: hint }, "目录里现在有 " + ((summary && summary.count) || 0) + " 个" + (summary && summary.builtAt ? " · 构建于 " + String(summary.builtAt).slice(0, 10) : ""))),
+        h("div", { style: { display: "grid", gridTemplateColumns: "56px minmax(160px, 1fr) 56px 150px 56px 130px", gap: "8px 10px", alignItems: "center" } },
+          h("span", { style: hint }, "名称"),
+          h("input", {
+            type: "search",
+            value: query,
+            placeholder: "整合包名 / 作者 / 插件名（例如 B站、壁纸、记忆）",
+            onChange: (event) => { setQuery(event.target.value); setPage(1) },
+            style: { height: "30px", borderRadius: "6px", border: "1px solid var(--dsw-alias-border-l2)", background: "transparent", color: "inherit", padding: "0 8px", fontSize: "12.5px" },
+          }),
+          h("span", { style: hint }, "类型"),
+          h("select", {
+            value: category,
+            onChange: (event) => { setCategory(event.target.value); setPage(1) },
+            style: { height: "30px", borderRadius: "6px", border: "1px solid var(--dsw-alias-border-l2)", background: "transparent", color: "inherit", fontSize: "12.5px" },
+          }, chips.map((chip) => h("option", { key: "sel-" + chip.id, value: chip.id }, chip.label + "（" + (chip.count || 0) + "）"))),
+          h("span", { style: hint }, "排序"),
+          h("select", {
+            value: sort,
+            onChange: (event) => { setSort(event.target.value); setPage(1) },
+            style: { height: "30px", borderRadius: "6px", border: "1px solid var(--dsw-alias-border-l2)", background: "transparent", color: "inherit", fontSize: "12.5px" },
+          }, MARKET_SORTS.map(([value, text]) => h("option", { key: value, value }, text)))),
+        h("div", { style: row },
+          h("button", { type: "button", style: { ...btn, minWidth: "96px" }, disabled: searching, onClick: () => setSearchTick((n) => n + 1) }, searching ? "搜索中…" : "搜索"),
+          h("button", { type: "button", style: { ...btn, minWidth: "96px" }, onClick: resetFilters }, "重置条件"),
+          h("button", { type: "button", style: { ...btn, minWidth: "128px" }, onClick: () => { if (typeof props.onGoInstall === "function") props.onGoInstall() } }, "安装已有整合包"),
+          h("span", { style: { ...hint, marginLeft: "auto" } }, "共 " + total + " 个" + (totalDownloads > 0 ? " · 本页插件上周下载 " + compact(totalDownloads) : ""))))
+
+      const emptyCard = h("div", { style: { border: "1px dashed var(--dsw-alias-border-l2)", borderRadius: "10px", padding: "16px", display: "flex", flexDirection: "column", gap: "8px" } },
+        h("span", { style: strong }, query ? "没有匹配的整合包" : present ? "这个类型下还没有整合包" : "还没有整合包目录"),
+        h("span", { style: hint }, query
+          ? "换个说法试试：整合包名、作者名、插件名都能搜。"
+          : present
+            ? "目录是通的，只是这一类还没有人提交；换个类型看看，或去「上传方式与规则」自己提交一个。"
+            : "第一次用要先从目录仓库拉一次清单（只有几百 KB）。"),
+        h("div", { style: row },
+          query ? h("button", { type: "button", style: btn, onClick: resetFilters }, "清空条件") : null,
+          h("button", { type: "button", style: { ...btn, minWidth: "96px" }, disabled: syncing || loading, onClick: syncNow }, syncing ? "更新中…" : "更新目录"),
+          h("button", { type: "button", style: btn, disabled: loading, onClick: retry }, "重试"),
+          h("button", { type: "button", style: chipBtn, onClick: () => { setView("rules"); setDetail(null) } }, "上传方式与规则")),
+        /重启|HTTP 40[45]|连不上/u.test(String(error || ""))
+          ? h("span", { style: { ...hint, lineHeight: "19px" } }, "网络正常但接口报 404/405 的话，是宿主还跑着旧代码：把 DSH 完全退出再打开，这一栏就会生效。")
+          : null)
+
+      const listBox = items.length > 0
+        ? h("div", { style: { border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "10px", overflow: "hidden" } }, items.map(renderRow))
+        : null
+
       return h("div", { style: { display: "flex", flexDirection: "column", gap: "10px" } },
         head,
-        !present
-          ? h("div", { style: { border: "1px dashed var(--dsw-alias-border-l2)", borderRadius: "10px", padding: "16px", display: "flex", flexDirection: "column", gap: "8px" } },
-            h("span", { style: strong }, loading ? "正在读取整合包目录…" : error ? "整合包市场没加载出来" : "还没有整合包目录"),
-            h("span", { style: hint }, loading
-              ? "先读本地缓存，读不到就从目录仓库拉一次；这一步不该拖住整个页面。"
-              : error
-                ? String(error)
-                : "第一次用要先从目录仓库拉一次清单（很小，只有几百 KB）；也可能是目录里暂时还没有人提交整合包。"),
-            h("div", { style: row },
-              h("button", { type: "button", style: btnPrimary, disabled: syncing || loading, onClick: syncNow }, syncing ? "更新中…" : "更新目录"),
-              h("button", { type: "button", style: btn, disabled: loading, onClick: retry }, "重试"),
-              h("button", { type: "button", style: chipBtn, onClick: () => { setView("rules"); setDetail(null) } }, "上传方式与规则")),
-            /重启|HTTP 40[45]|连不上/u.test(String(error || ""))
-              ? h("span", { style: { ...hint, lineHeight: "19px" } }, "网络正常但接口报 404/405 的话，是宿主还跑着旧代码：把 DSH 完全退出再打开，这一栏就会生效。")
-              : null)
-          : h("div", { style: { display: "flex", gap: "12px", alignItems: "flex-start" } },
-            h("div", { style: { width: "132px", flexShrink: 0, display: "flex", flexDirection: "column", gap: "4px" } },
-              chips.map((chip) => h("button", {
-                key: "cat-" + chip.id,
-                type: "button",
-                onClick: () => { setCategory(chip.id); setPage(1) },
-                style: {
-                  ...(category === chip.id ? btnPrimary : btn),
-                  textAlign: "left",
-                  height: "26px",
-                  padding: "0 8px",
-                  fontSize: "12px",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  gap: "6px",
-                },
-              }, h("span", null, chip.label), h("span", { style: { opacity: 0.7 } }, String(chip.count || 0))))),
-            h("div", { style: { flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "10px" } },
-              h("div", { style: row },
-                h("input", {
-                  type: "search",
-                  value: query,
-                  placeholder: "搜索整合包名 / 作者 / 插件（例如 B站、打包、壁纸）",
-                  onChange: (event) => { setQuery(event.target.value); setPage(1) },
-                  style: { flex: 1, minWidth: "220px", height: "28px", borderRadius: "6px", border: "1px solid var(--dsw-alias-border-l2)", background: "transparent", color: "inherit", padding: "0 8px", fontSize: "12.5px" },
-                }),
-                h("select", {
-                  value: sort,
-                  onChange: (event) => { setSort(event.target.value); setPage(1) },
-                  style: { height: "28px", borderRadius: "6px", border: "1px solid var(--dsw-alias-border-l2)", background: "transparent", color: "inherit", fontSize: "12px" },
-                }, MARKET_SORTS.map(([value, text]) => h("option", { key: value, value }, text)))),
-              searching && items.length === 0 ? h("span", { style: hint }, "检索中…") : null,
-              items.length === 0 && !searching
-                ? h("div", { style: { border: "1px dashed var(--dsw-alias-border-l2)", borderRadius: "10px", padding: "16px", display: "flex", flexDirection: "column", gap: "8px" } },
-                  h("span", { style: strong }, query ? "没有匹配的整合包" : "这个分类下还没有整合包"),
-                  h("span", { style: hint }, query
-                    ? "换个说法试试：整合包名、作者名、插件名（例如 B站、壁纸、记忆）都能搜。"
-                    : "目录是空的：要么还没人提交，要么本地缓存太旧。可以先更新目录看看，或去「上传方式与规则」自己提交一个。"),
-                  h("div", { style: row },
-                    query ? h("button", { type: "button", style: btn, onClick: () => { setQuery(""); setCategory("all") } }, "清空搜索") : null,
-                    h("button", { type: "button", style: btn, disabled: syncing, onClick: syncNow }, syncing ? "更新中…" : "更新目录"),
-                    h("button", { type: "button", style: chipBtn, onClick: () => { setView("rules"); setDetail(null) } }, "上传方式与规则")))
-                : h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "10px" } },
-                  items.map((pack) => h("div", {
-                    key: "pack-" + pack.id,
-                    onClick: () => { setDetail(pack); setView("detail"); setError(""); setMsg("") },
-                    style: {
-                      border: "1px solid var(--dsw-alias-border-l2)",
-                      borderRadius: "10px",
-                      padding: "10px",
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "6px",
-                      cursor: "pointer",
-                    },
-                  },
-                    h("div", { style: { ...row, justifyContent: "space-between" } },
-                      h("span", { style: { fontWeight: 600, fontSize: "13px" } }, pack.name),
-                      h(Tag, null, pack.category || "其它")),
-                    h("span", { style: { ...hint, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" } }, (pack.description && pack.description.zh) || ""),
-                    h("div", { style: { ...row, justifyContent: "space-between" } },
-                      h("span", { style: hint }, (pack.plugins || []).length + " 个插件 · " + sizeText(pack.size)),
-                      pack.installed && pack.installed.all
-                        ? h("span", { style: { ...hint, color: "#2bb673" } }, "已装")
-                        : pack.installed && pack.installed.some
-                          ? h("span", { style: hint }, "部分已装")
-                          : null)))),
-              h("div", { style: { ...row, justifyContent: "space-between" } },
-                h("span", { style: hint }, "共 " + total + " 个" + (totalDownloads > 0 ? " · 本页插件上周下载 " + totalDownloads : "")),
-                hasMore ? h("button", { type: "button", style: hint, onClick: loadMore, disabled: searching }, searching ? "加载中…" : "加载更多") : null))),
-        error && present ? h("div", { style: { ...hint, color: "#ff6b6b" } }, error) : null,
-        msg ? h("div", { style: hint }, msg) : null)
+        searchCard,
+        loading && items.length === 0 ? h("div", { style: { ...hint, padding: "14px 2px" } }, "正在读取整合包目录…") : null,
+        error ? h("div", { style: { ...hint, color: "#ff6b6b", lineHeight: "19px" } }, String(error)) : null,
+        msg ? h("div", { style: hint }, msg) : null,
+        listBox,
+        !loading && items.length === 0 ? emptyCard : null,
+        hasMore ? h("button", { type: "button", style: btn, disabled: searching, onClick: loadMore }, searching ? "加载中…" : "加载更多") : null)
     }
 
     function Home(props) {
@@ -2737,6 +2751,7 @@ window.__ModuleLoader__.load({
     }
 
     exports.apply = apply
+    exports.MarketPanel = MarketPanel
     exports.inject = inject
     exports.Page = Page
     exports.Home = Home
