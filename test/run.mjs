@@ -2144,6 +2144,15 @@ test('社区资源：分类名助手要先定义再给分类下拉用（避免 T
   assert(cat < chips, 'catLabel 必须在 chips 之前定义，否则分类下拉一渲染就 ReferenceError')
 })
 
+test('两个插件市场界面的分类次序都跟插件市场自己声明的一致', () => {
+  const cat = fs.readFileSync(new URL('../lib/market-catalog.mjs', import.meta.url), 'utf8')
+  assert(!cat.includes('const order = new Map(CATEGORY_FALLBACK.map((item, i) => [item.id, i]))'), '分类不能用我们内置的表重排（那会跟市场那一列对不上）')
+  assert(cat.includes('顺序就是市场目录 metadata.categories 的声明顺序'), '注释要写清楚顺序来源')
+  assert(cat.includes('const compareMarket = (sort, categoryOrder) =>'), '默认排序要能拿到分类次序')
+  assert(cat.includes('if (ca !== cb) return ca - cb'), '默认排序先按市场分类次序排')
+  assert(cat.includes('const categoryOrder = new Map(index.categories.map((c, i) => [c.id, i]))'), '分类次序取自目录里的 categories')
+})
+
 test('打包版本只记客户端给的那一版，不向 registry 校验；兼容建议跟打包策略走', () => {
   const pack = fs.readFileSync(new URL('../lib/pack.mjs', import.meta.url), 'utf8')
   assert(!/Object\.keys\(versions\)\[0\]/u.test(pack), '不能再用 versions 的第一个键当版本（那是最老的版本）')
