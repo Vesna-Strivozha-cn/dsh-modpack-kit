@@ -112,6 +112,10 @@ AI 搜索花的 token 记在插件市场那边（它用你在「设置 → 模�
 * **进度窗丢失/忘了在哪**：页面标签行右边有「召回进度窗」点击。
 * **想先装上但是不启用插件**：打包/安装时关掉「装后整体启用」，或在安装器加 `--no-bundles`。
 
+## 代码地图
+
+`docs/CODE-MAP.md` 是给改代码的人的索引：功能 → 文件 → 符号 → grep 示例，路由表自动生成。`dev/tools/map.mjs` 重跑即可刷新。
+
 ## 实现要点（给改代码的人）
 
 * 宿主侧：`index.js` 只做路由与任务队列，打包/安装的纯逻辑在 `lib/`（`pack` / `install` / `scan` / `manifest` / `market-catalog` / `registry` / `net` / `groups` / `zip` / `tar` / `semver` / `store` / `http`），前端全部在单文件 `client.js`。

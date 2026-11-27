@@ -1,5 +1,8 @@
 /**
- * dsh-modpack —— Host 侧。
+ * dsh-modpack-kit —— Host 侧。
+ *
+ * 改之前先看 docs/CODE-MAP.md（功能 → 符号 → grep 示例；路由表也在那里自动生成）。
+ * 路由体写法：if (!needPost(req, res)) return + await readJsonBody(req)，不要再包 fenced()。
  *
  * 只做四件事：把本机状况喂给页面、在内存里打包、在安装前把包拆开看清楚、调官方 CLI 装。
  * 所有网络请求走 lib/registry 的白名单与体积上限；所有文件写入落在 <DSH_HOME>/dsh-modpack。
@@ -521,7 +524,7 @@ export default {
       }
     })
 
-    // —— 打包（支持后台任务：左下角悬浮窗要进度，且允许同时打多个包） ——
+    // —— 打包（支持后台任务：悬浮窗要进度，且允许同时打多个包） ——
     const jobs = new Map()
     let jobSeq = 0
     // 任务记录默认留到 DSH 下次启动（或点「清空进程」），切页面、换入口都不丢。

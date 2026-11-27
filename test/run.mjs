@@ -2096,6 +2096,23 @@ test('体量词条与水槽：按插件总数自动分档，类型太杂归到�
   // 语言按钮高亮跟当前语言走：切页回来不能停在中文
 })
 
+test('代码地图：每个模块都有一行去处，大文件有区块注释（省得下次满仓找）', () => {
+  const map = fs.readFileSync(new URL('../docs/CODE-MAP.md', import.meta.url), 'utf8')
+  const libs = fs.readdirSync(new URL('../lib/', import.meta.url)).filter((f) => f.endsWith('.mjs'))
+  assert(map.includes('CODE-MAP'), '要有标题')
+  assert(map.includes('功能 → 去哪找'), '要有「功能 → 去哪找」表')
+  assert(map.includes('常见改动的连锁清单'), '要有连锁改动清单')
+  for (const file of ['index.js', 'client.js', 'assets/install-stub.mjs']) assert(map.includes(file), '地图里缺 ' + file)
+  for (const file of libs) assert(map.includes('lib/' + file), '地图里缺 lib/' + file)
+  assert(libs.length >= 15, '库文件数量应不少于 15 个')
+  const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  const sections = ['PackPanel', 'InstallPanel', 'MarketPanel', 'SettingsPanel', 'JobDock', 'Home']
+  for (const name of sections) assert(cli.includes('// ===== [区块] ') && cli.includes('：' + name + ' ====='), '缺区块注释：' + name)
+  assert(cli.includes('docs/CODE-MAP.md'), 'client.js 头部要指向代码地图')
+  const idx = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  assert(idx.includes('docs/CODE-MAP.md'), 'index.js 头部要指向代码地图')
+  assert(idx.includes('readJsonBody(req)'), '路由体写法要写进文件头')
+})
 test('社区资源：连点五次标签会闪 1 秒那句自嘲，且改名后旧名字不再出现', () => {
   const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   assert(cli.includes('不不不，我资源无疑是贫乏的'), '彩蛋文案要在')

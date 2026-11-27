@@ -1,9 +1,11 @@
 /**
- * dsh-modpack —— 客户端半边：左侧栏「整合包」。
+ * dsh-modpack-kit —— 客户端半边：左侧栏「整合包」。
  *
- * 三页：打包（挑插件、选版本、看检测报告）、安装（链接/本机包、预览、落地）、
- * 设置与记录（扫描策略、白名单、历史）。数据全部来自 /dsh-modpack/api/*（同源 fetch），
- * 与 host 半端共用同一份状态；这里不碰文件，也不做网络请求。
+ * 改之前先看 docs/CODE-MAP.md（功能 → 符号 → grep 示例）。
+ *
+ * 四个页签：打包（挑插件、策略三选一、检测报告）、安装 / 导入（链接/本机包、预览、落地）、
+ * 社区资源（浏览别人传的整合包，下载后交回安装页）、设置与记录（显示位置、市场、目录、历史）。
+ * 数据全部来自 /dsh-modpack-kit/api/*（同源 fetch），与 host 端共用同一份状态；这里不碰文件，也不直接发网络请求（市场 AI 搜索除外，它转发给插件市场）。
  *
  * 制作通告：本文件在 DeepSeek Harness（DSH）会话中由 AI 助手与作者 Vesna-Strivozha-cn 协作产出。
  */
@@ -35,6 +37,7 @@ window.__ModuleLoader__.load({
     const LEVEL_COLOR = { high: "#ff6b6b", error: "#ff6b6b", medium: "#ffb020", warn: "#ffb020", low: "#8a8f98", info: "#8a8f98" }
     const FORMAT_TEXT = { full: "完整版（含插件本体）", lite: "轻量版（联网取包）", hybrid: "混合包（联网取包 + 配置）" }
     // 三种打包策略的介绍：服务端 /pack/plan 会给可用性与不可用原因，这里只做兜底展示
+    // ===== [区块] 打包策略与常量：STRATEGY_INFO =====
     const STRATEGY_INFO = [
       { id: "full", title: "完整包（懒人包）", online: false, note: "插件本体一起装进包，不联网也能装。有网时按市场版本装，装完依赖是 ^版本，插件市场认成市场版；离线才退回包内副本（显示本地安装）。可以带自定义配置与数据。" },
       { id: "lite", title: "轻量包（轻量包）", online: true, note: "只记 名字@版本，体积最小。安装时必须联网从市场取包，不带自定义配置与数据，插件市场按版本认成市场版。" },
@@ -374,6 +377,7 @@ window.__ModuleLoader__.load({
 
     // 一整块可以折叠的区域：标题行常驻，点标题或「展开/收起」都行。
     // 默认收起，只有真有问题（高危 / 阻断）才默认摊开。
+    // ===== [区块] 通用折叠容器：FoldBox =====
     function FoldBox(props) {
       const [open, setOpen] = useState(props.defaultOpen === true)
       const summary = Array.isArray(props.summary) ? props.summary : [props.summary]
@@ -390,6 +394,7 @@ window.__ModuleLoader__.load({
         open ? props.children : (props.collapsedNote ? h("div", { style: hint }, props.collapsedNote) : null))
     }
 
+    // ===== [区块] 安全检测报告（可折叠）：ScanReport =====
     function ScanReport(props) {
       const scan = props.scan
       const counts = (scan && scan.counts) || { high: 0, medium: 0, low: 0 }
@@ -433,6 +438,7 @@ window.__ModuleLoader__.load({
         h("div", { style: hint }, props.footNote || "命中内容只在内存里比对，报告只保留类型、位置与掩码，原文不落盘。"))
     }
 
+    // ===== [区块] 兼容性列表（可折叠）：CompatList =====
     function CompatList(props) {
       const compat = props.compat
       if (!compat) return null
@@ -560,6 +566,7 @@ window.__ModuleLoader__.load({
       return { width, height }
     }
 
+    // ===== [区块] 悬浮进度窗（拖动 / 召回 / 终止）：JobDock =====
     function JobDock(props) {
       const given = Array.isArray(props.jobs) ? props.jobs : []
       // 「清空进程」之后，就算服务端还残留一条，也在界面上立刻拿掉
@@ -843,6 +850,7 @@ window.__ModuleLoader__.load({
     }
 
     // —— 打包 ——
+    // ===== [区块] 页签一：打包：PackPanel =====
     function PackPanel(props) {
       const status = props.status
       const jobs = Array.isArray(props.jobs) ? props.jobs : []
@@ -1501,6 +1509,7 @@ window.__ModuleLoader__.load({
     }
 
     // —— 安装 / 导入 ——
+    // ===== [区块] 页签二：安装 / 导入：InstallPanel =====
     function InstallPanel(props) {
       const [source, setSource] = useState({ kind: "url", url: "", file: "" })
       const [packs, setPacks] = useState([])
@@ -1906,6 +1915,7 @@ window.__ModuleLoader__.load({
         h("span", null, "如果这个插件省了时间，顺手点个 Star，能让更多人找到它。"))
     }
 
+    // ===== [区块] 页签四：设置与记录：SettingsPanel =====
     function SettingsPanel(props) {
       const [cfg, setCfg] = useState(props.status ? props.status.config : null)
       const [saved, setSaved] = useState("")
@@ -2167,6 +2177,7 @@ window.__ModuleLoader__.load({
       "只提交你自己打的包，或者你有权再分发的插件组合；作者没写许可证的组合请先问作者。",
     ]
 
+    // ===== [区块] 页签三：社区资源：MarketPanel =====
     function MarketPanel(props) {
       const [view, setView] = useState("list")
       const [summary, setSummary] = useState(null)
@@ -2470,6 +2481,7 @@ window.__ModuleLoader__.load({
         hasMore ? h("button", { type: "button", style: btn, disabled: searching, onClick: loadMore }, searching ? "加载中…" : "加载更多") : null)
     }
 
+    // ===== [区块] 外壳：页签、刷新、彩蛋、进度窗挂载：Home =====
     function Home(props) {
       const [tab, setTab] = useState("pack")
       const jobs = useJobs()
@@ -2681,6 +2693,7 @@ window.__ModuleLoader__.load({
     }
 
     /** 用一个小组件包住面板，进入时拉一次状态，之后交给子面板。 */
+    // ===== [区块] 页面入口：读 status、按显示位决定挂哪里：Page =====
     function Page(props) {
       const [status, setStatus] = useState(null)
       const [error, setError] = useState("")
