@@ -851,6 +851,20 @@ window.__ModuleLoader__.load({
 
     // —— 打包 ——
     // ===== [区块] 页签一：打包：PackPanel =====
+    // 分类胶囊行：打包页与「社区资源 → 插件」共用，省得两套样式各写一遍。
+    function CategoryChips(props) {
+      const chips = props.chips || []
+      if (chips.length === 0) return null
+      return h("div", { style: { ...row, rowGap: "4px", maxHeight: "78px", overflow: "auto" } },
+        chips.map((c) => h("button", {
+          key: "chip-" + c.id,
+          type: "button",
+          style: props.value === c.id ? chipOn : chipBtn,
+          onClick: () => props.onChange(c.id),
+          title: "只看「" + c.label + "」" + (c.count ? "，市场内 " + c.count + " 个" : ""),
+        }, c.label + (c.count ? " " + c.count : ""))))
+    }
+
     function PackPanel(props) {
       const status = props.status
       const jobs = Array.isArray(props.jobs) ? props.jobs : []
@@ -1384,13 +1398,7 @@ window.__ModuleLoader__.load({
               h("button", { style: btn, disabled: !!syncing, onClick: buildCatalog }, syncing || "建立目录索引（5~30 秒）"))
             : null,
           catalog.present && syncing ? h("div", { style: hint }, syncing) : null,
-          catalog.present ? h("div", { style: { ...row, rowGap: "4px", maxHeight: "78px", overflow: "auto" } },
-            chips.map((c) => h("button", {
-              key: c.id,
-              style: category === c.id ? chipOn : chipBtn,
-              onClick: () => setCategory(c.id),
-              title: "只看「" + c.label + "」" + (c.count ? "，市场内 " + c.count + " 个" : ""),
-            }, c.label + (c.count ? " " + c.count : "")))) : null,
+          catalog.present ? h(CategoryChips, { chips, value: category, onChange: setCategory }) : null,
           aiReady === false ? h("div", { style: hint }, "当前装的插件市场没有 AI 搜索（旧版本或未安装）：这里只做关键词搜索。装新版 dshmarket 后开关会自动出现。") : null,
           aiRun ? h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "6px", borderColor: aiRun.error ? "#ff6b6b" : "var(--dsw-alias-border-l2)" } },
             h("div", { style: row },
@@ -2239,27 +2247,55 @@ window.__ModuleLoader__.load({
       const market = (props.status && props.status.market) || null
       const installed = Boolean(market && market.installed)
       const [query, setQuery] = useState("")
+      const [category, setCategory] = useState("all")
+      const [sort, setSort] = useState("market")
       const [items, setItems] = useState([])
       const [total, setTotal] = useState(0)
+      const [page, setPage] = useState(1)
+      const [hasMore, setHasMore] = useState(false)
+      const [chips, setChips] = useState([{ id: "all", label: "全部", count: 0 }])
       const [loading, setLoading] = useState(false)
       const [error, setError] = useState("")
+      const applyItems = (data, append) => {
+        const next = Array.isArray(data.items) ? data.items : []
+        setItems(append ? (prev) => prev.concat(next) : next)
+        setTotal(Number(data.total) || 0)
+        setHasMore(Boolean(data.hasMore))
+        if (Array.isArray(data.categories)) {
+          setChips([{ id: "all", label: "全部", count: (data.summary && data.summary.count) || Number(data.total) || 0 }]
+            .concat(data.categories.map((c) => ({ id: c.label, label: c.label, count: c.count || 0 }))))
+        }
+      }
+      // 分类直接沿用插件市场目录的口径：服务端按 label 过滤，前端只拿一页
       useEffect(() => {
         if (!installed) return undefined
         let alive = true
         const timer = setTimeout(() => {
           setLoading(true)
-          api("/catalog/search", { query, sort: "market", page: 1, pageSize: 20 })
+          api("/catalog/search", { query, category, sort, page: 1, pageSize: 20 })
             .then((data) => {
               if (!alive) return
-              setItems(Array.isArray(data.items) ? data.items : [])
-              setTotal(Number(data.total) || 0)
+              applyItems(data, false)
+              setPage(1)
               setError(data && data.ok === false ? (data.error || "") : "")
             })
             .catch((e) => { if (alive) setError((e && e.message) || String(e)) })
             .finally(() => { if (alive) setLoading(false) })
         }, 220)
         return () => { alive = false; clearTimeout(timer) }
-      }, [installed, query])
+      }, [installed, query, category, sort])
+      const loadMore = async () => {
+        if (!hasMore || loading) return
+        setLoading(true)
+        try {
+          const data = await api("/catalog/search", { query, category, sort, page: page + 1, pageSize: 20 })
+          if (data && data.ok) { applyItems(data, true); setPage(page + 1) }
+        } catch (e) {
+          setError((e && e.message) || String(e))
+        } finally {
+          setLoading(false)
+        }
+      }
       if (!installed) {
         return h("div", { style: { border: "1px dashed var(--dsw-alias-border-l2)", borderRadius: "10px", padding: "16px", display: "flex", flexDirection: "column", gap: "8px" } },
           h("span", { style: strong }, "请先安装插件市场"),
@@ -2270,16 +2306,22 @@ window.__ModuleLoader__.load({
         h("div", { style: { border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "10px", padding: "12px", display: "flex", flexDirection: "column", gap: "8px" } },
           h("div", { style: { ...row, justifyContent: "space-between" } },
             h("span", { style: { ...strong, fontSize: "13px" } }, "搜索插件"),
-            h("span", { style: hint }, "目录与检索都来自插件市场（dsh-plugin-catalog）")),
-          h("input", {
-            type: "search",
-            value: query,
-            placeholder: "插件名 / 作者 / 描述（例如 记忆、壁纸、侧边栏）",
-            onChange: (event) => setQuery(event.target.value),
-            style: { height: "30px", borderRadius: "6px", border: "1px solid var(--dsw-alias-border-l2)", background: "transparent", color: "inherit", fontSize: "12.5px", padding: "0 8px" },
-          }),
-          h("div", { style: row },
-            h("span", { style: { ...hint, marginLeft: "auto" } }, loading ? "搜索中…" : "共 " + total + " 个"))),
+            h("span", { style: hint }, "跟打包页同一套：分类、搜索、已装优先；目录与检索都来自插件市场（dsh-plugin-catalog）")),
+          h("div", { style: { display: "grid", gridTemplateColumns: "minmax(160px, 1fr) 160px 120px", gap: "8px", alignItems: "center" } },
+            h("input", {
+              type: "search",
+              value: query,
+              placeholder: "插件名 / 作者 / 描述（例如 记忆、壁纸、侧边栏）",
+              onChange: (event) => setQuery(event.target.value),
+              style: { height: "30px", borderRadius: "6px", border: "1px solid var(--dsw-alias-border-l2)", background: "transparent", color: "inherit", fontSize: "12.5px", padding: "0 8px" },
+            }),
+            h("select", {
+              value: sort,
+              onChange: (event) => setSort(event.target.value),
+              style: { height: "30px", borderRadius: "6px", border: "1px solid var(--dsw-alias-border-l2)", background: "transparent", color: "inherit", fontSize: "12.5px" },
+            }, [["market", "按相关度"], ["new", "最新发布"], ["name", "按名字"]].map(([value, text]) => h("option", { key: value, value }, text))),
+            h("span", { style: { ...hint, textAlign: "right" } }, loading ? "搜索中…" : "共 " + total + " 个")),
+          h(CategoryChips, { chips, value: category, onChange: setCategory })),
         error ? h("div", { style: { ...hint, color: "#ff6b6b", lineHeight: "19px" } }, String(error)) : null,
         loading && items.length === 0 ? h("div", { style: { ...hint, padding: "14px 2px" } }, "正在读取插件目录…") : null,
         !loading && items.length === 0 && !error
@@ -2299,6 +2341,8 @@ window.__ModuleLoader__.load({
               h("span", { style: { ...hint, marginLeft: "auto" } }, item.version ? "v" + item.version : "")),
             h("span", { style: hint }, item.description || "作者没写说明。"),
             h("span", { style: { ...hint, fontSize: "11.5px" } }, item.name)))),
+        hasMore ? h("div", { style: row },
+          h("button", { type: "button", style: btn, disabled: loading, onClick: loadMore }, loading ? "读取中…" : "加载更多")) : null,
         h("div", { style: hint }, "装 / 更新 / 卸载插件仍在插件市场里做：这一层只按它的目录浏览与检索，不重复实现一套安装。"))
     }
 
