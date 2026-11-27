@@ -2182,7 +2182,128 @@ window.__ModuleLoader__.load({
     ]
 
     // ===== [区块] 页签三：社区资源：MarketPanel =====
+    // 两层：外层管左侧「插件 / 整合包」两个大类，里层各自是独立的浏览面板。
+    // 整合包这层就是原来的整包浏览（列表 / 详情 / 上传规则）。
     function MarketPanel(props) {
+      const [kind, setKind] = useState("modpack")
+      const market = (props.status && props.status.market) || null
+      const installed = Boolean(market && market.installed)
+      const railBtn = (id, text, note) => h("button", {
+        type: "button",
+        key: "rail-" + id,
+        onClick: () => setKind(id),
+        style: {
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "flex-start",
+          gap: "2px",
+          width: "100%",
+          padding: "9px 10px",
+          borderRadius: "8px",
+          border: kind === id ? "1px solid #4C7DF0" : "1px solid transparent",
+          background: kind === id ? "rgba(76, 125, 240, 0.12)" : "transparent",
+          color: "inherit",
+          cursor: "pointer",
+          textAlign: "left",
+          fontSize: "13px",
+          fontWeight: kind === id ? 600 : 400,
+        },
+      },
+        h("span", null, text),
+        note ? h("span", { style: { ...hint, fontSize: "11px", lineHeight: "15px" } }, note) : null)
+      const rail = h("div", {
+        style: {
+          width: "152px",
+          flexShrink: 0,
+          display: "flex",
+          flexDirection: "column",
+          gap: "4px",
+          borderRight: "0.5px solid var(--dsw-alias-border-l2)",
+          paddingRight: "10px",
+          position: "sticky",
+          top: 0,
+        },
+      },
+        h("span", { style: { ...hint, padding: "0 2px 4px" } }, "大类"),
+        railBtn("modpack", "整合包", "打包好的插件组合"),
+        railBtn("plugin", "插件", installed ? "接入插件市场" : "需要插件市场"))
+      return h("div", { style: { display: "flex", gap: "14px", alignItems: "flex-start" } },
+        rail,
+        h("div", { style: { flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "10px" } },
+          kind === "plugin" ? h(PluginBrowser, { status: props.status }) : h(ModpackBrowser, props)))
+    }
+
+    // 「插件」这一类不自己造目录：直接用插件市场的目录与检索（dsh-plugin-catalog），
+    // 没装市场就没有这一层可看——所以先提示去装市场，而不是给一个空列表。
+    function PluginBrowser(props) {
+      const market = (props.status && props.status.market) || null
+      const installed = Boolean(market && market.installed)
+      const [query, setQuery] = useState("")
+      const [items, setItems] = useState([])
+      const [total, setTotal] = useState(0)
+      const [loading, setLoading] = useState(false)
+      const [error, setError] = useState("")
+      useEffect(() => {
+        if (!installed) return undefined
+        let alive = true
+        const timer = setTimeout(() => {
+          setLoading(true)
+          api("/catalog/search", { query, sort: "market", page: 1, pageSize: 20 })
+            .then((data) => {
+              if (!alive) return
+              setItems(Array.isArray(data.items) ? data.items : [])
+              setTotal(Number(data.total) || 0)
+              setError(data && data.ok === false ? (data.error || "") : "")
+            })
+            .catch((e) => { if (alive) setError((e && e.message) || String(e)) })
+            .finally(() => { if (alive) setLoading(false) })
+        }, 220)
+        return () => { alive = false; clearTimeout(timer) }
+      }, [installed, query])
+      if (!installed) {
+        return h("div", { style: { border: "1px dashed var(--dsw-alias-border-l2)", borderRadius: "10px", padding: "16px", display: "flex", flexDirection: "column", gap: "8px" } },
+          h("span", { style: strong }, "请先安装插件市场"),
+          h("span", { style: hint }, "「插件」这一类直接读插件市场（dshmarket）的目录与检索，功能基于插件市场；没装就没有这一层可看。"),
+          h("span", { style: hint }, "装好插件市场后回到这里，左边这一项会变成「接入插件市场」，列表也就有了。"))
+      }
+      return h("div", { style: { display: "flex", flexDirection: "column", gap: "10px" } },
+        h("div", { style: { border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "10px", padding: "12px", display: "flex", flexDirection: "column", gap: "8px" } },
+          h("div", { style: { ...row, justifyContent: "space-between" } },
+            h("span", { style: { ...strong, fontSize: "13px" } }, "搜索插件"),
+            h("span", { style: hint }, "目录与检索都来自插件市场（dsh-plugin-catalog）")),
+          h("input", {
+            type: "search",
+            value: query,
+            placeholder: "插件名 / 作者 / 描述（例如 记忆、壁纸、侧边栏）",
+            onChange: (event) => setQuery(event.target.value),
+            style: { height: "30px", borderRadius: "6px", border: "1px solid var(--dsw-alias-border-l2)", background: "transparent", color: "inherit", fontSize: "12.5px", padding: "0 8px" },
+          }),
+          h("div", { style: row },
+            h("span", { style: { ...hint, marginLeft: "auto" } }, loading ? "搜索中…" : "共 " + total + " 个"))),
+        error ? h("div", { style: { ...hint, color: "#ff6b6b", lineHeight: "19px" } }, String(error)) : null,
+        loading && items.length === 0 ? h("div", { style: { ...hint, padding: "14px 2px" } }, "正在读取插件目录…") : null,
+        !loading && items.length === 0 && !error
+          ? h("div", { style: { border: "1px dashed var(--dsw-alias-border-l2)", borderRadius: "10px", padding: "16px", display: "flex", flexDirection: "column", gap: "6px" } },
+            h("span", { style: strong }, query ? "没有匹配的插件" : "插件目录还是空的"),
+            h("span", { style: hint }, query ? "换个说法试试：插件名、作者名、描述里的词都能搜。" : "插件市场还没建过目录索引：去插件市场里刷一次，或等它自己更新。"))
+          : null,
+        h("div", { style: { border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "10px", overflow: "hidden" } },
+          items.map((item) => h("div", {
+            key: "plug-" + item.name,
+            style: { display: "flex", flexDirection: "column", gap: "3px", padding: "9px 12px", borderBottom: "0.5px solid var(--dsw-alias-border-l2)" },
+          },
+            h("div", { style: row },
+              h("span", { style: { fontSize: "13px", fontWeight: 600 } }, item.title || item.name),
+              h(Tag, null, item.categoryLabel || item.category || "其它"),
+              item.installed ? h("span", { style: { ...hint, color: "#2bb673" } }, "本机已装" + (item.updateAvailable ? "（市场版 " + item.version + " 更新）" : "")) : null,
+              h("span", { style: { ...hint, marginLeft: "auto" } }, item.version ? "v" + item.version : "")),
+            h("span", { style: hint }, item.description || "作者没写说明。"),
+            h("span", { style: { ...hint, fontSize: "11.5px" } }, item.name)))),
+        h("div", { style: hint }, "装 / 更新 / 卸载插件仍在插件市场里做：这一层只按它的目录浏览与检索，不重复实现一套安装。"))
+    }
+
+    // ===== [区块] 页签三：社区资源：整合包浏览（列表 / 详情 / 上传规则） =====
+    function ModpackBrowser(props) {
       const [view, setView] = useState("list")
       const [summary, setSummary] = useState(null)
       const [items, setItems] = useState([])
@@ -2631,7 +2752,8 @@ window.__ModuleLoader__.load({
         tab === "market" ? h(MarketPanel, { key: "market-" + gen, status, onGoInstall: () => setTab("install") }) : null,
         tab === "settings" ? h(SettingsPanel, { key: "settings-" + gen, status }) : null,
       ]
-      const footNote = h("div", { style: hint }, "说明：整合包只打包你选择的插件与必要配置。打包与安装安全检测在内存中进行，命中原文不落盘；请遵守插件作者许可证与你所在地区的法律法规。")
+      // 这段是打包/安装的安全说明，社区资源里不该出现（那里是逛目录，不是打包）
+      const footNote = tab === "market" ? null : h("div", { style: hint }, "说明：整合包只打包你选择的插件与必要配置。打包与安装安全检测在内存中进行，命中原文不落盘；请遵守插件作者许可证与你所在地区的法律法规。")
       const unlagNode = unlag
         ? h("div", { style: row },
           h("button", {
@@ -2830,6 +2952,8 @@ window.__ModuleLoader__.load({
 
     exports.apply = apply
     exports.MarketPanel = MarketPanel
+    exports.PluginBrowser = PluginBrowser
+    exports.ModpackBrowser = ModpackBrowser
     exports.inject = inject
     exports.Page = Page
     exports.Home = Home
