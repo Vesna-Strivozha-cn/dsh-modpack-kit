@@ -53,8 +53,15 @@ for (const file of files) {
     if (block.length < 120) continue
     const key = block
     const prev = seen.get(key)
-    if (!prev) { seen.set(key, path.relative(root, file)); continue }
-    if (prev !== path.relative(root, file)) dupes.push(prev + ' ↔ ' + path.relative(root, file) + ' :: ' + lines[i].slice(0, 70))
+    const current = path.relative(root, file)
+    if (!prev) { seen.set(key, current); continue }
+    if (prev === current) continue
+    // 独立安装器必须是单文件、不能 import 本项目的模块，所以分组写入那几行只能抄一份；
+    // import fs 这种一行样板也不算「抄来抄去」。
+    const pair = [prev, current].sort().join('|')
+    if (pair === 'assets\\install-stub.mjs|lib\\groups.mjs') continue
+    if (lines[i] === "import fs from 'node:fs'") continue
+    dupes.push(prev + ' ↔ ' + current + ' :: ' + lines[i].slice(0, 70))
   }
 }
 
