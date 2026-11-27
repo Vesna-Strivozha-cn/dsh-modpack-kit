@@ -6,7 +6,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, createHash } from 'node:crypto'
 import { loadConfig, saveConfig, pathsFor, profileName, readHistory, appendHistory, clearHistory, removeHistory, appendLog, ensureDir, slugify, DEFAULT_CONFIG } from './lib/store.mjs'
 import { listInstalled, dshVersion, readProfilePackage, readBundles } from './lib/profile.mjs'
 import { downloadPackage, npmMetadata, pickVersion, fetchLimited, relativeTime, probeRegistry } from './lib/registry.mjs'
@@ -17,6 +17,7 @@ import { readMarketGroups, groupViews } from './lib/groups.mjs'
 import { classifyPlugin } from './lib/classify.mjs'
 import { groupFindings } from './lib/scan.mjs'
 import { catalogSummary, searchCatalog, syncCatalog, categoryMapFor, lookupPlugins } from './lib/market-catalog.mjs'
+import { marketSummary, searchMarket, syncMarket, findMarketPack, fetchMarketPack } from './lib/modpack-catalog.mjs'
 import { parseYaml } from './lib/yamlish.mjs'
 import { readPatch } from './lib/profile.mjs'
 import { buildReadme } from './lib/manifest.mjs'
@@ -85,6 +86,10 @@ export default {
         profile: profileName(config),
         paths: pathsFor(config),
         catalog,
+        // 整合包市场（自建目录）：只读缓存，界面拿摘要与首页；真正的搜索走 /market/search
+        modpackMarket: (() => {
+          try { return marketSummary(config) } catch { return { present: false, stale: true, count: 0, categories: [], repo: '' } }
+        })(),
         placements: {
           settings: config.showInSettings !== false,
           sidebar: config.showInSidebar !== false,
@@ -374,6 +379,106 @@ export default {
         json(res, 200, data)
       } catch (e) {
         json(res, 500, { ok: false, error: String((e && e.message) || e), items: [] })
+      }
+    })
+
+    // —— 整合包市场（自建目录） ——
+    // 只做三件事：读目录、检索、取包；校验/扫描/安装全部复用 /inspect 与 /install 那条老路。
+    route('/dsh-modpack-kit/api/market', async (req, res) => {
+      if (req.method !== 'GET') { json(res, 405, { ok: false }); return }
+      let summary = null
+      try { summary = marketSummary(config) } catch (e) { summary = { present: false, stale: true, count: 0, categories: [], error: String((e && e.message) || e) } }
+      // 没目录、或过期了：后台自己去拉，页面先拿空壳（首屏不该被网络拖住）
+      if (!summary.present || summary.stale) ensureMarket(false)
+      const installed = new Set(installedOrEmpty().filter((p) => p.isPlugin).map((p) => p.name))
+      let first = { items: [], total: 0, hasMore: false }
+      if (summary.present) {
+        try {
+          first = searchMarket(config, { page: 1, pageSize: config.catalogPageSize, installed })
+        } catch (e) { first = { items: [], total: 0, hasMore: false, error: String((e && e.message) || e) } }
+      }
+      json(res, 200, { ok: true, summary, ...first, page: 1, pageSize: config.catalogPageSize })
+    })
+
+    route('/dsh-modpack-kit/api/market/search', async (req, res) => {
+      if (!needPost(req, res)) return
+      const body = await readJsonBody(req)
+      const installed = installedOrEmpty().filter((p) => p.isPlugin).map((p) => p.name)
+      try {
+        const data = searchMarket(config, {
+          query: body.query,
+          category: body.category,
+          page: body.page,
+          pageSize: Number(body.pageSize) || config.catalogPageSize,
+          sort: body.sort,
+          installed,
+        })
+        json(res, 200, data)
+      } catch (e) {
+        json(res, 200, { ok: false, error: String((e && e.message) || e), items: [], total: 0 })
+      }
+    })
+
+    route('/dsh-modpack-kit/api/market/sync', async (req, res) => {
+      if (!needPost(req, res)) return
+      const body = await readJsonBody(req)
+      try {
+        const result = await syncMarket(config, { force: body.force === true || config.modpackRefreshHours === 0 })
+        if (result.ok && !result.skipped) appendLog('modpack market synced: ' + result.count + ' packs / ' + result.source)
+        const installed = installedOrEmpty().filter((p) => p.isPlugin).map((p) => p.name)
+        const first = result.ok ? searchMarket(config, { page: 1, pageSize: config.catalogPageSize, installed }) : null
+        json(res, 200, { ok: result.ok, error: result.error || '', summary: marketSummary(config), ...(first || { items: [], total: 0, hasMore: false }) })
+      } catch (e) {
+        json(res, 200, { ok: false, error: String((e && e.message) || e) })
+      }
+    })
+
+    // 下载一个整合包：只认目录里登记过的条目，sha256 必须对得上，
+    // 下完直接在内存里交给原来的 inspect（安全检测、兼容、许可证那一套原样走）。
+    route('/dsh-modpack-kit/api/market/download', async (req, res) => {
+      if (!needPost(req, res)) return
+      const body = await readJsonBody(req)
+      const found = findMarketPack(config, body.id)
+      if (!found.ok) { json(res, 200, { ok: false, error: found.error }); return }
+      const pack = found.pack
+      try {
+        const fetched = await fetchMarketPack(config, pack)
+        const bytes = fetched.buffer
+        if (pack.size > 0 && bytes.length !== pack.size) {
+          throw new Error('包体积和目录里登记的不一致（登记 ' + pack.size + ' 字节，实际 ' + bytes.length + ' 字节）')
+        }
+        const actual = createHash('sha256').update(bytes).digest('hex')
+        if (pack.sha256 && actual !== pack.sha256) {
+          throw new Error('sha256 对不上：目录登记 ' + pack.sha256.slice(0, 12) + '…，实际 ' + actual.slice(0, 12) + '…')
+        }
+        const inspected = inspectPackBuffer(bytes, {
+          config,
+          force: body.force === true,
+          scanBeforeInstall: config.scanBeforeInstall !== false,
+          extraScanRules: Array.isArray(config.extraScanRules) ? config.extraScanRules : [],
+        })
+        const fileName = slugify(inspected.manifest.name || pack.id, 'pack') + '.dshpack'
+        const token = rememberPending(fileName, { buffer: bytes, manifest: inspected.manifest, report: inspected.report, scan: inspected.scan })
+        appendLog('market download ' + pack.id + ' ' + bytes.length + ' bytes')
+        json(res, 200, {
+          ok: true,
+          token,
+          fileName,
+          size: bytes.length,
+          packId: pack.id,
+          packName: pack.name,
+          url: fetched.url,
+          manifest: inspected.manifest,
+          integrity: inspected.integrity,
+          scan: inspected.scan,
+          scanGroups: groupFindings(inspected.scan.findings, inspected.manifest.plugins),
+          report: inspected.report,
+          blockingReasons: inspected.blockingReasons,
+          notes: inspected.notes,
+          compat: compatFor(inspected.manifest),
+        })
+      } catch (e) {
+        json(res, 200, { ok: false, error: String((e && e.message) || e) })
       }
     })
 
@@ -1223,9 +1328,34 @@ export default {
       return catalogJob
     }
 
+    // 整合包市场也照这个套路：启动补一次、过期在后台补、十分钟内失败不重敲
+    let marketJob = null
+    let lastMarketTry = 0
+    const ensureMarket = (force) => {
+      if (marketJob) return marketJob
+      if (force !== true && Date.now() - lastMarketTry < 10 * 60 * 1000) return Promise.resolve({ ok: false, skipped: true })
+      if (force !== true) lastMarketTry = Date.now()
+      const hours = Math.max(1, Number(config.modpackRefreshHours) || 24)
+      marketJob = syncMarket(config, { force: force === true, maxAgeMs: hours * 3600 * 1000 })
+        .then((result) => {
+          if (result && result.ok && !result.skipped) appendLog(`整合包目录更新 ${result.count} 个（${result.source}）`)
+          else if (result && !result.ok) log('modpack market sync failed:', result.error)
+          return result
+        })
+        .catch((error) => {
+          log('modpack market sync failed:', String((error && error.message) || error))
+          return { ok: false, error: String((error && error.message) || error) }
+        })
+        .finally(() => { marketJob = null })
+      return marketJob
+    }
+
     log('routes ready')
     // 起来就把目录补一次；没有网也不影响其它功能，失败只写日志
-    if (process.env.DSH_MODPACK_OFFLINE !== '1') ensureCatalog(false).catch(() => {})
+    if (process.env.DSH_MODPACK_OFFLINE !== '1') {
+      ensureCatalog(false).catch(() => {})
+      if (config.showModpackMarket !== false) ensureMarket(false).catch(() => {})
+    }
     ctx.effect(() => {
       const timer = setInterval(sweeper, 60 * 1000)
       if (typeof timer.unref === 'function') timer.unref()

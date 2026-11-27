@@ -60,6 +60,18 @@ dsh plugin --profile desktop add github:Vesna-Strivozha-cn/dsh-modpack-kit
 * **在插件里导入**：可逐插件勾选，缺依赖 / 引擎不符的置顶显示，每个带配置的插件可选「包内配置 / 保持本机」，装后整体启用，装后同步市场分组。
 * 已装的默认跳过，可选换成包内版本。
 
+## 整合包市场
+
+目录仓库 `Vesna-Strivozha-cn/dsh-modpack-catalog`（GitHub Actions `17 3 * * *` 一天一轮询）。
+
+* 数据：`packs.json`（`schema: 1`、`builtAt`、`count`、`categories[{id,label,count}]`、`packs[]`）。jsDelivr `gh/<repo>@main/packs.json` 与 raw.githubusercontent 两个源都取一遍，按 `builtAt` 用更新的那份（jsDelivr 对 gh 的缓存可能落后一整天）；本地缓存在 `<home>/dsh-modpack/modpack-market/packs.cache.json`（连 `sourceBase` 一起存），TTL 按 `modpackRefreshHours`（默认 24 小时）。
+* 条目：`id`、`name`、`author`、`category`、`version`、`strategy`（当前只收 `lite`）、`file`、`sha256`、`size`、`createdAt`、`description{zh,en}`、`plugins[{name,version,description}]`、`downloads`。
+* 插件端路由：`GET /api/market`（摘要 + 首页 + 已装标记）、`POST /api/market/search`、`POST /api/market/sync`、`POST /api/market/download`。下载只认目录里的 id，取回字节后先对体积与 `sha256`，再 `inspectPackBuffer`、`rememberPending`，返回的 `token` 交安装页读取——与手动导入走同一条。
+* 客户端：`MarketPanel`（列表 / 详情 / 规则三视图），下载后 `requestInstall()` 一次交接给 `InstallPanel`，后者照旧 `POST /api/inspect`；进度仍在左下角悬浮窗。
+* 开关：`showModpackMarket`（默认 true）、`modpackRefreshHours`（1~168）。
+
+
+
 ## 与插件市场的兼容
 
 ||装了插件市场|没装|

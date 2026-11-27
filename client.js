@@ -1528,6 +1528,26 @@ window.__ModuleLoader__.load({
         setError("")
       }), [])
 
+      // 从「整合包市场」点「下载并安装」过来：包已经在后端取回、校验并换成 token，
+      // 这里接住直接读一遍预览，后面的勾选、扫描、兼容提示走的是同一条安装流程。
+      useEffect(() => subscribeInstallRequest((payload) => {
+        if (!payload || !payload.token) return
+        installRequest.value = null
+        setSource({ kind: "token", token: payload.token, url: "", file: "" })
+        setError("")
+        setDone(null)
+        setDeferred([])
+        setAskReplace(false)
+        setBusy("import")
+        api("/inspect", { token: payload.token })
+          .then((data) => {
+            if (data && data.ok) setPreview(data)
+            else { setPreview(null); setError((data && data.error) || "读取失败") }
+          })
+          .catch((e) => { setPreview(null); setError((e && e.message) || String(e)) })
+          .finally(() => setBusy(""))
+      }), [])
+
       const fileRef = useRef(null)
 
       // 用「打开文件」的方式挑一个 .dshpack：字节直接读，不要求你写路径
@@ -2084,6 +2104,20 @@ window.__ModuleLoader__.load({
           marketSidebarMsg ? h("div", { style: hint }, marketSidebarMsg) : null,
           saved ? h("span", { style: hint }, saved) : null),
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
+          h("div", { style: strong }, "整合包市场（附属功能）"),
+          h(Switch, {
+            checked: cfg.showModpackMarket !== false,
+            label: "显示「整合包市场」这一栏",
+            title: "插件自带、默认开启；关掉只是不显示这一栏",
+            onChange: (v) => patch({ showModpackMarket: v }),
+          }),
+          h("div", { style: hint }, "关掉只是不显示这一栏，已经下载与安装的整合包不受影响。目录来自自建仓库 " + (((props.status || {}).modpackMarket || {}).repo || "Vesna-Strivozha-cn/dsh-modpack-catalog") + "，CI 每天重建一次。"),
+          h("div", { style: row },
+            h("span", { style: label }, "自动更新（小时）"),
+            h("input", { style: { ...input, width: "78px" }, type: "number", min: "1", max: "168", value: cfg.modpackRefreshHours || 24, onChange: (e) => setField("modpackRefreshHours", Number(e.target.value)) }),
+            h("button", { style: btn, disabled: busy, onClick: () => patch({ modpackRefreshHours: cfg.modpackRefreshHours }) }, "保存")),
+          h("div", { style: hint }, "搜索、分类、详情与下载码都在「整合包市场」那一栏里；上传方式与规则点那一栏右上角。")),
+        h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
           h("div", { style: strong }, "插件目录（分类 · 搜索 · 分页）"),
           h("div", { style: hint }, (() => {
             const c = props.status && props.status.catalog
@@ -2099,6 +2133,276 @@ window.__ModuleLoader__.load({
           h("div", { style: hint }, "目录就是插件市场自己发布的那份 dsh-plugin-catalog：CDN 优先，失败退回 npm 包。分类与词条都照它来，本插件不另造一套。"),
           h(RepoFooter, null))
       )
+    }
+
+    // —— 整合包市场 ——
+    // 「从市场下载」到「安装页」之间只有一次交接：市场负责下载、校验、把 token 递过去，
+    // 识别 / 扫描 / 兼容 / 许可证 / 安装这些仍然由安装页那条老路做，不另起一套。
+    const installRequest = { value: null, subs: new Set() }
+    const requestInstall = (payload) => {
+      installRequest.value = payload || null
+      for (const fn of [...installRequest.subs]) {
+        try { fn(installRequest.value) } catch (e) { }
+      }
+    }
+    const subscribeInstallRequest = (fn) => {
+      installRequest.subs.add(fn)
+      if (installRequest.value) {
+        try { fn(installRequest.value) } catch (e) { }
+      }
+      return () => { installRequest.subs.delete(fn) }
+    }
+
+    const MARKET_SORTS = [["new", "最新"], ["downloads", "下载量"], ["size", "体积"], ["name", "名称"]]
+    const MARKET_RULES = [
+      "只收轻量包（strategy: lite）：只记插件名与版本、不带插件本体，体积通常十几 KB；装的时候由本插件按版本联网取包。",
+      "每个整合包提交一份清单（data/packs/<id>.json）：名字、作者、分类、一句中文说明、插件与版本、包文件与 sha256。",
+      "包文件放仓库的 packs/ 目录，或放到你自己的 GitHub Release 再在清单里写直链；目录只存元数据，不搬别人的文件。",
+      "分类按使用场景：工作办公、性能优化、界面美化、实用功能、开发调试、娱乐休闲、学习资料、其它。",
+      "CI 每天重建一次目录；sha256 与大小对不上、或分类写错的条目会被构建挡下，不会进目录。",
+      "只提交你自己打的包，或者你有权再分发的插件组合；作者没写许可证的组合请先问作者。",
+    ]
+
+    function MarketPanel(props) {
+      const [view, setView] = useState("list")
+      const [summary, setSummary] = useState(null)
+      const [items, setItems] = useState([])
+      const [total, setTotal] = useState(0)
+      const [page, setPage] = useState(1)
+      const [hasMore, setHasMore] = useState(false)
+      const [query, setQuery] = useState("")
+      const [category, setCategory] = useState("all")
+      const [sort, setSort] = useState("new")
+      const [loading, setLoading] = useState(true)
+      const [searching, setSearching] = useState(false)
+      const [syncing, setSyncing] = useState(false)
+      const [error, setError] = useState("")
+      const [msg, setMsg] = useState("")
+      const [detail, setDetail] = useState(null)
+      const [downloading, setDownloading] = useState(false)
+      const mounted = useRef(true)
+      useEffect(() => () => { mounted.current = false }, [])
+
+      const applyData = (data) => {
+        if (!data) return
+        if (data.summary) setSummary(data.summary)
+        setItems(Array.isArray(data.items) ? data.items : [])
+        setTotal(Number(data.total) || 0)
+        setHasMore(Boolean(data.hasMore))
+      }
+
+      useEffect(() => {
+        let alive = true
+        api("/market").then((data) => {
+          if (!alive) return
+          applyData(data)
+          setError("")
+        }).catch((e) => { if (alive) setError((e && e.message) || String(e)) }).finally(() => { if (alive) setLoading(false) })
+        return () => { alive = false }
+      }, [])
+
+      // 搜索 / 分类 / 排序都走服务端分页：客户端只拿一页，目录再大也不卡
+      useEffect(() => {
+        if (loading) return undefined
+        let alive = true
+        const timer = setTimeout(() => {
+          setSearching(true)
+          api("/market/search", { query, category, sort, page: 1, pageSize: 20 })
+            .then((data) => { if (alive) { applyData(data); setError(data && data.ok === false ? (data.error || "") : "") } })
+            .catch((e) => { if (alive) setError((e && e.message) || String(e)) })
+            .finally(() => { if (alive) setSearching(false) })
+        }, 240)
+        return () => { alive = false; clearTimeout(timer) }
+      }, [query, category, sort])
+
+      const loadMore = async () => {
+        if (!hasMore || searching) return
+        setSearching(true)
+        try {
+          const data = await api("/market/search", { query, category, sort, page: page + 1, pageSize: 20 })
+          if (data && data.ok) {
+            setItems((prev) => prev.concat(data.items))
+            setPage(page + 1)
+            setHasMore(Boolean(data.hasMore))
+          }
+        } catch (e) {
+          setError((e && e.message) || String(e))
+        } finally {
+          setSearching(false)
+        }
+      }
+
+      const syncNow = async () => {
+        setSyncing(true); setError(""); setMsg("")
+        try {
+          const data = await api("/market/sync", { force: true })
+          if (data && data.ok) { applyData(data); setMsg("目录已更新") } else { setError((data && data.error) || "更新失败") }
+        } catch (e) {
+          setError((e && e.message) || String(e))
+        } finally {
+          setSyncing(false)
+        }
+      }
+
+      const download = async (pack) => {
+        setDownloading(true); setError(""); setMsg("")
+        try {
+          const data = await api("/market/download", { id: pack.id })
+          if (!data || data.ok !== true) { setError((data && data.error) || "下载失败"); return }
+          requestInstall({ token: data.token, fileName: data.fileName, packName: pack.name })
+          setMsg("已下载并读取：" + pack.name + "，正在转到安装页")
+          if (typeof props.onGoInstall === "function") props.onGoInstall()
+        } catch (e) {
+          setError((e && e.message) || String(e))
+        } finally {
+          setDownloading(false)
+        }
+      }
+
+      const categories = (summary && summary.categories) || []
+      const chips = [{ id: "all", label: "全部", count: (summary && summary.count) || 0 }].concat(
+        categories.map((c) => ({ id: c.label, label: c.label, count: c.count || 0 })),
+      )
+      const present = Boolean(summary && summary.present)
+      const totalDownloads = items.reduce((sum, item) => sum + (Number(item.downloads) || 0), 0)
+      const sizeText = (bytes) => (bytes >= 1024 * 1024 ? Math.round((bytes / 1024 / 1024) * 10) / 10 + " MB" : Math.max(1, Math.round(bytes / 1024)) + " KB")
+
+      const head = h("div", { style: { ...row, justifyContent: "space-between" } },
+        h("div", { style: row },
+          h("span", { style: { ...strong, fontSize: "14px" } }, "整合包市场"),
+          present ? h(Tag, null, total + " 个") : null,
+          present ? h("span", { style: hint }, "目录来自 " + (summary.repo || "dsh-modpack-catalog") + (summary.builtAt ? " · 构建于 " + String(summary.builtAt).slice(0, 10) : "")) : null),
+        h("div", { style: row },
+          h("button", { type: "button", style: chipBtn, onClick: () => { setView("rules"); setDetail(null) } }, "上传方式与规则"),
+          h("button", { type: "button", style: chipBtn, disabled: syncing, onClick: syncNow }, syncing ? "更新中…" : "更新目录")))
+
+      if (view === "rules") {
+        return h("div", { style: { display: "flex", flexDirection: "column", gap: "10px" } },
+          h("div", { style: row },
+            h("button", { type: "button", style: chipBtn, onClick: () => setView("list") }, "← 返回市场"),
+            h("span", { style: { ...strong, fontSize: "14px" } }, "上传方式与规则")),
+          h("div", { style: { ...hint, lineHeight: "20px" } }, "第一阶段只收轻量包；审核与出问题下架都靠 PR 与 issue，和插件市场一样。"),
+          h("ol", { style: { margin: 0, paddingLeft: "18px", display: "flex", flexDirection: "column", gap: "8px" } },
+            MARKET_RULES.map((line, index) => h("li", { key: "rule-" + index, style: { fontSize: "12.5px", lineHeight: "19px" } }, line))),
+          h("div", { style: { border: "1px dashed var(--dsw-alias-border-l2)", borderRadius: "8px", padding: "10px", display: "flex", flexDirection: "column", gap: "4px" } },
+            h("span", { style: strong }, "清单长这样"),
+            h("code", { style: { fontSize: "11.5px", whiteSpace: "pre-wrap", lineHeight: "17px" } },
+              '{\n  "id": "bili-trio",\n  "name": "B站三件套",\n  "author": "你的名字",\n  "category": "实用功能",\n  "version": "1.0.0",\n  "strategy": "lite",\n  "file": "bili-trio-lite.dshpack",\n  "sha256": "…64 位…",\n  "size": 12226,\n  "description": { "zh": "一句话说明" },\n  "plugins": [{ "name": "dsh-bili-whale", "version": "0.4.6" }]\n}')),
+          h("div", { style: hint }, "仓库：github.com/" + (summary && summary.repo ? summary.repo : "Vesna-Strivozha-cn/dsh-modpack-catalog") + " · 提 PR 即可，CI 每天重建目录。"))
+      }
+
+      if (view === "detail" && detail) {
+        const pack = detail
+        const plugins = pack.plugins || []
+        const downloadCode = [pack.url || "", "sha256: " + (pack.sha256 || ""), "size: " + pack.size + " 字节"].join("\n")
+        return h("div", { style: { display: "flex", flexDirection: "column", gap: "10px" } },
+          h("div", { style: row },
+            h("button", { type: "button", style: chipBtn, onClick: () => { setView("list"); setDetail(null) } }, "← 返回列表"),
+            h("span", { style: { ...strong, fontSize: "15px" } }, pack.name),
+            h(Tag, null, pack.category || "其它"),
+            h("span", { style: hint }, "v" + pack.version + " · 作者 " + (pack.author || "?") + " · " + sizeText(pack.size) + " · 下载 " + (Number(pack.downloads) || 0))),
+          h("div", { style: { border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "10px", padding: "12px", display: "flex", flexDirection: "column", gap: "8px" } },
+            h("span", { style: strong }, "这个整合包是做什么的"),
+            h("div", { style: { fontSize: "12.5px", lineHeight: "20px" } }, (pack.description && pack.description.zh) || "作者没写说明。"),
+            pack.installed && pack.installed.all
+              ? h("div", { style: { ...hint, color: "#2bb673" } }, "这台机器上已经装齐了它包含的插件，可以只下载留存或再装一遍。")
+              : pack.installed && pack.installed.some
+                ? h("div", { style: hint }, "本机已装 " + pack.installed.count + " / " + plugins.length + " 个，安装时会先跳过已装的那些。")
+                : null),
+          h("div", { style: { border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "10px", padding: "12px", display: "flex", flexDirection: "column", gap: "6px" } },
+            h("span", { style: strong }, "包含的插件（这些插件会干什么）"),
+            plugins.length === 0
+              ? h("span", { style: hint }, "清单里没有插件记录。")
+              : plugins.map((plugin) => h("div", { key: "p-" + plugin.name, style: { display: "flex", flexDirection: "column", gap: "2px", borderTop: "0.5px solid var(--dsw-alias-border-l2)", paddingTop: "6px" } },
+                h("div", { style: row },
+                  h("span", { style: { fontSize: "12.5px", fontWeight: 600 } }, plugin.name),
+                  h(Tag, null, "@" + plugin.version)),
+                h("span", { style: hint }, plugin.description || "作者没写这个插件的说明。"))),
+            h("span", { style: hint }, "安装时按上面的版本从插件市场取包；取不到就明确报错，不会拿别的东西顶替。")),
+          h("div", { style: { border: "1px dashed var(--dsw-alias-border-l2)", borderRadius: "10px", padding: "12px", display: "flex", flexDirection: "column", gap: "6px" } },
+            h("span", { style: strong }, "下载码"),
+            h("code", { style: { fontSize: "11.5px", whiteSpace: "pre-wrap", lineHeight: "17px", wordBreak: "break-all" } }, downloadCode),
+            h("span", { style: hint }, "下载码就是包的直链 + sha256：谁拿到都能自己下载核对，不依赖这个界面。")),
+          error ? h("div", { style: { ...hint, color: "#ff6b6b" } }, error) : null,
+          msg ? h("div", { style: hint }, msg) : null,
+          h("div", { style: row },
+            h("button", { type: "button", style: btnPrimary, disabled: downloading, onClick: () => download(pack) }, downloading ? "下载中…" : "下载并安装"),
+            h("span", { style: hint }, "下载后在内存里校验 sha256、跑一遍安全检测，再转到安装页读取；半成品不会留在磁盘上。")))
+      }
+
+      return h("div", { style: { display: "flex", flexDirection: "column", gap: "10px" } },
+        head,
+        !present
+          ? h("div", { style: { border: "1px dashed var(--dsw-alias-border-l2)", borderRadius: "10px", padding: "16px", display: "flex", flexDirection: "column", gap: "8px" } },
+            h("span", { style: strong }, loading ? "正在读取整合包目录…" : "还没有整合包目录"),
+            h("span", { style: hint }, "第一次用要先从目录仓库拉一次清单（很小，只有几百 KB）。"),
+            h("div", { style: row },
+              h("button", { type: "button", style: btnPrimary, disabled: syncing || loading, onClick: syncNow }, syncing ? "更新中…" : "更新目录"),
+              error ? h("span", { style: { ...hint, color: "#ff6b6b" } }, error) : null))
+          : h("div", { style: { display: "flex", gap: "12px", alignItems: "flex-start" } },
+            h("div", { style: { width: "132px", flexShrink: 0, display: "flex", flexDirection: "column", gap: "4px" } },
+              chips.map((chip) => h("button", {
+                key: "cat-" + chip.id,
+                type: "button",
+                onClick: () => { setCategory(chip.id); setPage(1) },
+                style: {
+                  ...(category === chip.id ? btnPrimary : btn),
+                  textAlign: "left",
+                  height: "26px",
+                  padding: "0 8px",
+                  fontSize: "12px",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: "6px",
+                },
+              }, h("span", null, chip.label), h("span", { style: { opacity: 0.7 } }, String(chip.count || 0))))),
+            h("div", { style: { flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "10px" } },
+              h("div", { style: row },
+                h("input", {
+                  type: "search",
+                  value: query,
+                  placeholder: "搜索整合包名 / 作者 / 插件（例如 B站、打包、壁纸）",
+                  onChange: (event) => { setQuery(event.target.value); setPage(1) },
+                  style: { flex: 1, minWidth: "220px", height: "28px", borderRadius: "6px", border: "1px solid var(--dsw-alias-border-l2)", background: "transparent", color: "inherit", padding: "0 8px", fontSize: "12.5px" },
+                }),
+                h("select", {
+                  value: sort,
+                  onChange: (event) => { setSort(event.target.value); setPage(1) },
+                  style: { height: "28px", borderRadius: "6px", border: "1px solid var(--dsw-alias-border-l2)", background: "transparent", color: "inherit", fontSize: "12px" },
+                }, MARKET_SORTS.map(([value, text]) => h("option", { key: value, value }, text)))),
+              searching && items.length === 0 ? h("span", { style: hint }, "检索中…") : null,
+              items.length === 0 && !searching
+                ? h("div", { style: { ...hint, padding: "18px 0" } }, query ? "没有匹配的整合包。" : "这个分类下还没有整合包。")
+                : h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "10px" } },
+                  items.map((pack) => h("div", {
+                    key: "pack-" + pack.id,
+                    onClick: () => { setDetail(pack); setView("detail"); setError(""); setMsg("") },
+                    style: {
+                      border: "1px solid var(--dsw-alias-border-l2)",
+                      borderRadius: "10px",
+                      padding: "10px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "6px",
+                      cursor: "pointer",
+                    },
+                  },
+                    h("div", { style: { ...row, justifyContent: "space-between" } },
+                      h("span", { style: { fontWeight: 600, fontSize: "13px" } }, pack.name),
+                      h(Tag, null, pack.category || "其它")),
+                    h("span", { style: { ...hint, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" } }, (pack.description && pack.description.zh) || ""),
+                    h("div", { style: { ...row, justifyContent: "space-between" } },
+                      h("span", { style: hint }, (pack.plugins || []).length + " 个插件 · " + sizeText(pack.size)),
+                      pack.installed && pack.installed.all
+                        ? h("span", { style: { ...hint, color: "#2bb673" } }, "已装")
+                        : pack.installed && pack.installed.some
+                          ? h("span", { style: hint }, "部分已装")
+                          : null)))),
+              h("div", { style: { ...row, justifyContent: "space-between" } },
+                h("span", { style: hint }, "共 " + total + " 个" + (totalDownloads > 0 ? " · 本页插件上周下载 " + totalDownloads : "")),
+                hasMore ? h("button", { type: "button", style: hint, onClick: loadMore, disabled: searching }, searching ? "加载中…" : "加载更多") : null))),
+        error && present ? h("div", { style: { ...hint, color: "#ff6b6b" } }, error) : null,
+        msg ? h("div", { style: hint }, msg) : null)
     }
 
     function Home(props) {
@@ -2192,6 +2496,7 @@ window.__ModuleLoader__.load({
       const tabs = [
         ["pack", "打包"],
         ["install", "安装 / 导入"],
+        ...((status && status.config && status.config.showModpackMarket === false) ? [] : [["market", "整合包市场"]]),
         ["settings", "设置与记录"],
       ]
       const tabBtn = (key, text) => h("button", {
@@ -2210,6 +2515,7 @@ window.__ModuleLoader__.load({
       const panels = [
         tab === "pack" ? h(PackPanel, { key: "pack-" + gen, status, jobs, result: packResult, setResult: savePackResult, focus }) : null,
         tab === "install" ? h(InstallPanel, { key: "install-" + gen, status }) : null,
+        tab === "market" ? h(MarketPanel, { key: "market-" + gen, status, onGoInstall: () => setTab("install") }) : null,
         tab === "settings" ? h(SettingsPanel, { key: "settings-" + gen, status }) : null,
       ]
       const footNote = h("div", { style: hint }, "说明：整合包只打包你选择的插件与必要配置。打包与安装安全检测在内存中进行，命中原文不落盘；请遵守插件作者许可证与你所在地区的法律法规。")
@@ -2246,7 +2552,6 @@ window.__ModuleLoader__.load({
           h("div", { style: { maxWidth: "1020px", margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: "10px" } },
             h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine, refreshNote ? h("span", { style: hint }, refreshNote) : null, refreshMsg ? h("span", { style: { ...hint, color: "#ff6b6b" } }, refreshMsg) : null, recallBtn, refreshBtn),
           unlagNode,
-            unlagNode,
             panels,
             footNote,
             h(RepoFooter, null)),

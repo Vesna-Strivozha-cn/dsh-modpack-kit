@@ -17,6 +17,7 @@ import { DEFAULT_CONFIG, clampConfig, appendHistory, readHistory, clearHistory, 
 import { listInstalled } from '../lib/profile.mjs'
 import { assertAllowedUrl, parseCurlResponse, NET_DEFAULTS } from '../lib/net.mjs'
 import { readMarketGroups, groupViews } from '../lib/groups.mjs'
+import { marketSummary, searchMarket, findMarketPack } from '../lib/modpack-catalog.mjs'
 
 const results = []
 let failed = 0
@@ -1801,7 +1802,7 @@ test('轻量包取不到版本时要给出替代方案（不是干巴巴报错�
   const src = fs.readFileSync(new URL('../lib/install.mjs', import.meta.url), 'utf8')
   assert(src.includes('轻量包只记版本号，市场上没有这个版本时就装不回来'), '要解释为什么装不回来')
   assert(src.includes('完整包或混合包'), '要给出可操作的替代方案')
-  assert(src.includes('/没有版本满足|notarget|E404/u.test(why)'), '只在这类「取不到版本」的错误上加建议')
+  assert(src.includes('元数据缺少') && src.includes('没有版本信息'), 'registry 侧「没有这个版本」的几种说法也要算进这一类')
 })
 test('AI 搜索：借用插件市场新接口，旧版市场自动退回关键词', () => {
   const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
@@ -1919,6 +1920,104 @@ test('解除卡顿：本机装了 dsh-unlag 才出按钮，悬浮写明来源', 
   assert(cli.includes('/dsh-unlag/reload?requestId='), '按钮就是让它整理一次')
   assert(cli.includes('来自插件市场的 dsh-unlag@'), '悬浮要写明来源与版本，别让人以为是本插件功能')
   assert(cli.includes('typeof data.version === "string"'), '读不到版本就当没装，别硬塞按钮')
+})
+
+test('整合包市场：目录形状、检索、分类与分页都在服务端算', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-modpack-market-'))
+  const previous = process.env.DSH_HOME
+  process.env.DSH_HOME = home
+  try {
+    const config = { ...DEFAULT_CONFIG }
+    const dir = path.join(home, 'dsh-modpack', 'modpack-market')
+    fs.mkdirSync(dir, { recursive: true })
+    const pack = (id, name, category, extra) => ({
+      id, name, author: 'tester', category, version: '1.0.0', strategy: 'lite',
+      file: id + '-lite.dshpack', sha256: 'a'.repeat(64), size: 2048, createdAt: '2026-11-27',
+      description: { zh: name + ' 的说明', en: '' }, plugins: [{ name: 'demo-' + id, version: '1.0.0' }], downloads: 10,
+      ...extra,
+    })
+    const data = {
+      schema: 1,
+      builtAt: '2026-11-27T00:00:00Z',
+      count: 3,
+      categories: [{ id: 'util', label: '实用功能', count: 2 }, { id: 'ui', label: '界面美化', count: 1 }],
+      packs: [pack('a-pack', '甲包', '实用功能'), pack('b-pack', '乙包', '实用功能'), pack('c-pack', '丙包', '界面美化')],
+    }
+    fs.writeFileSync(path.join(dir, 'packs.cache.json'), JSON.stringify({
+      fetchedAt: Date.now(),
+      source: 'https://example.com/packs.json',
+      sourceBase: 'https://example.com/market',
+      data,
+    }), 'utf8')
+
+    const summary = marketSummary(config)
+    assert(summary.present === true && summary.count === 3, '缓存写得对就该读得出 3 个')
+    assert(summary.stale === false, '刚写进去的不该算过期')
+
+    const all = searchMarket(config, { page: 1, pageSize: 2, installed: ['demo-a-pack'] })
+    assert(all.ok === true && all.total === 3 && all.items.length === 2 && all.hasMore === true, '一页 2 条、还有下一页')
+    assert(all.items[0].installed.all === true, '已装的排前面，并且标出来')
+    assert(/\/market\/packs\/a-pack-lite\.dshpack$/u.test(all.items[0].url), '包地址要用缓存的 sourceBase 拼')
+
+    const page2 = searchMarket(config, { page: 2, pageSize: 2 })
+    assert(page2.items.length === 1 && page2.hasMore === false, '第二页只剩 1 条')
+
+    const byCategory = searchMarket(config, { category: '界面美化', page: 1, pageSize: 10 })
+    assert(byCategory.total === 1 && byCategory.items[0].id === 'c-pack', '分类要能用中文标签筛')
+
+    const byQuery = searchMarket(config, { query: '乙包', page: 1, pageSize: 10 })
+    assert(byQuery.total === 1 && byQuery.items[0].id === 'b-pack', '按名字搜得到')
+
+    const byPlugin = searchMarket(config, { query: 'demo-c-pack', page: 1, pageSize: 10 })
+    assert(byPlugin.total === 1 && byPlugin.items[0].id === 'c-pack', '按包内插件名也搜得到')
+
+    const found = findMarketPack(config, 'b-pack')
+    assert(found.ok === true && found.pack.id === 'b-pack', '按 id 找条目')
+    assert(findMarketPack(config, 'nope').ok === false, '没有的 id 要明说没有')
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previous
+    fs.rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('整合包市场：页面入口、下载交接、附属开关与规则页都在', () => {
+  const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert(cli.includes('function MarketPanel(props)'), '要有独立的整合包市场面板')
+  assert(cli.includes('["market", "整合包市场"]'), '标签行要多一栏')
+  assert(cli.includes('showModpackMarket === false'), '设置里关掉就不显示那一栏')
+  assert(cli.includes('const installRequest = { value: null, subs: new Set() }'), '市场到安装页只交接一次')
+  assert(cli.includes('requestInstall({ token: data.token, fileName: data.fileName, packName: pack.name })'), '下载完把 token 递过去')
+  assert(cli.includes('api("/inspect", { token: payload.token })'), '安装页接到之后仍走原来的识别')
+  assert(cli.includes('上传方式与规则'), '规则要有独立页面')
+  assert(cli.includes('只收轻量包（strategy: lite）'), '规则里要写明当前只收轻量包')
+  assert(cli.includes('下载码'), '详情页要有下载码（直链 + sha256）')
+  assert(cli.includes('这个整合包是做什么的'), '详情里要有整合包介绍')
+  assert(cli.includes('包含的插件（这些插件会干什么）'), '要列出包内插件与用途')
+  assert(cli.includes('MarketPanel, { key: "market-" + gen'), '市场面板也要跟着刷新重挂')
+  const index = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  assert(index.includes("route('/dsh-modpack-kit/api/market'"), '要有目录接口')
+  assert(index.includes("route('/dsh-modpack-kit/api/market/search'"), '检索走服务端')
+  assert(index.includes("route('/dsh-modpack-kit/api/market/download'"), '下载走服务端并换 token')
+  assert(index.includes('createHash(\'sha256\').update(bytes).digest(\'hex\')'), '下载后要核对 sha256')
+  assert(index.includes('pack.size > 0 && bytes.length !== pack.size'), '体积对不上也要拦')
+  assert(index.includes('showModpackMarket !== false'), '默认开启：只有显式关掉才不补目录')
+  const store = fs.readFileSync(new URL('../lib/store.mjs', import.meta.url), 'utf8')
+  assert(/showModpackMarket: true/u.test(store), '默认开启')
+  assert(/modpackRefreshHours: 24/u.test(store), '默认一天一轮询')
+})
+
+test('curl 兜底要保留原始字节（中文 JSON 不能被重新编码）', () => {
+  const body = Buffer.from(JSON.stringify({ name: '效率三件套', note: '中文与 emoji 🚀' }), 'utf8')
+  const raw = Buffer.concat([Buffer.from('HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n', 'latin1'), body])
+  const parsed = parseCurlResponse(raw)
+  assert(parsed.status === 200, '状态码要读出来')
+  assert(parsed.body.equals(body), '正文必须逐字节一致，不能按 utf8 解码再 latin1 回写')
+  const json = JSON.parse(parsed.body.toString('utf8'))
+  assert(json.name === '效率三件套' && json.note.includes('🚀'), '解析回来中文与 emoji 不能坏')
+  const src = fs.readFileSync(new URL('../lib/net.mjs', import.meta.url), 'utf8')
+  assert(src.includes("encoding: 'buffer'"), 'execFile 必须拿 Buffer，而不是先解成字符串')
+  assert(!src.includes("Buffer.from(stdout, 'latin1')"), '不要再用 latin1 把字符串转回 Buffer')
 })
 
 for (const [state, name, detail] of results) {
