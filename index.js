@@ -86,7 +86,7 @@ export default {
         profile: profileName(config),
         paths: pathsFor(config),
         catalog,
-        // 整合包市场（自建目录）：只读缓存，界面拿摘要与首页；真正的搜索走 /market/search
+        // 社区资源（自建目录）：只读缓存，界面拿摘要与首页；真正的搜索走 /market/search
         modpackMarket: (() => {
           try { return marketSummary(config) } catch { return { present: false, stale: true, count: 0, categories: [], repo: '' } }
         })(),
@@ -397,7 +397,7 @@ export default {
       }
     })
 
-    // —— 整合包市场（自建目录） ——
+    // —— 社区资源（自建目录） ——
     // 只做三件事：读目录、检索、取包；校验/扫描/安装全部复用 /inspect 与 /install 那条老路。
     route('/dsh-modpack-kit/api/market', async (req, res) => {
       if (req.method !== 'GET') { json(res, 405, { ok: false }); return }
@@ -415,7 +415,7 @@ export default {
       json(res, 200, { ok: true, summary, ...first, page: 1, pageSize: config.catalogPageSize })
     })
 
-    // 整合包市场的检索同样按 key 缓存 20 秒：连按几个键不该每次都重新打分
+    // 社区资源的检索同样按 key 缓存 20 秒：连按几个键不该每次都重新打分
     const marketSearchCache = new Map()
     route('/dsh-modpack-kit/api/market/search', async (req, res) => {
       if (!needPost(req, res)) return
@@ -1350,7 +1350,7 @@ export default {
       return catalogJob
     }
 
-    // 整合包市场也照这个套路：启动补一次、过期在后台补、十分钟内失败不重敲
+    // 社区资源也照这个套路：启动补一次、过期在后台补、十分钟内失败不重敲
     let marketJob = null
     let lastMarketTry = 0
     const ensureMarket = (force) => {

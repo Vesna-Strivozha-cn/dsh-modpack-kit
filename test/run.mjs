@@ -1998,7 +1998,7 @@ test('整合包市场：目录形状、检索、分类与分页都在服务端�
 test('整合包市场：页面入口、下载交接、附属开关与规则页都在', () => {
   const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   assert(cli.includes('function MarketPanel(props)'), '要有独立的整合包市场面板')
-  assert(cli.includes('["market", "整合包市场"]'), '标签行要多一栏')
+  assert(cli.includes('["market", "社区资源"]'), '标签行要多一栏「社区资源」')
   assert(cli.includes('showModpackMarket === false'), '设置里关掉就不显示那一栏')
   assert(cli.includes('const installRequest = { value: null, subs: new Set() }'), '市场到安装页只交接一次')
   assert(cli.includes('requestInstall({ token: data.token, fileName: data.fileName, packName: pack.name })'), '下载完把 token 递过去')
@@ -2096,7 +2096,19 @@ test('体量词条与水槽：按插件总数自动分档，类型太杂归到�
   // 语言按钮高亮跟当前语言走：切页回来不能停在中文
 })
 
-test('整合包市场：分类名助手要先定义再给分类下拉用（避免 TDZ 白屏）', () => {
+test('社区资源：连点五次标签会闪 1 秒那句自嘲，且改名后旧名字不再出现', () => {
+  const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert(cli.includes('不不不，我资源无疑是贫乏的'), '彩蛋文案要在')
+  assert(cli.includes('eggClicks.current.length < 5'), '五次以内不该触发')
+  assert(cli.includes('now - at < 1500'), '连点窗口是 1.5 秒')
+  assert(cli.includes('setTimeout(() => { eggTimer.current = 0; setEggMsg("") }, 1000)'), '提示只留 1 秒')
+  assert(cli.includes('if (key === "market") spotEgg()'), '点「社区资源」标签时计数')
+  assert(cli.includes('const eggNode = eggMsg'), '提示条要渲染出来')
+  assert(!cli.includes('"整合包市场"'), '旧名字不该再出现在界面文案里')
+  assert(!cli.includes('显示「整合包市场」'), '设置里的开关文案也要改名')
+})
+
+test('社区资源：分类名助手要先定义再给分类下拉用（避免 TDZ 白屏）', () => {
   const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   const cat = cli.indexOf('const catLabel = (name) =>')
   const chips = cli.indexOf('const chips = [{ id: "all"')

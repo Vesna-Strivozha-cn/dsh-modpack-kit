@@ -693,7 +693,7 @@ await step('导入列表：多份可以同时留着，装完自动从进度窗�
   assert.ok(installer.includes('说明：'), '裸 DSH 的安装器也要打印描述')
 })
 
-await step('整合包市场：目录接口、检索与下载都能单独跑，不联网也不炸', async () => {
+await step('社区资源：目录接口、检索与下载都能单独跑，不联网也不炸', async () => {
   const index = await call('/dsh-modpack-kit/api/market')
   assert.equal(index.code, 200)
   assert.equal(index.data.ok, true)
@@ -710,9 +710,9 @@ await step('整合包市场：目录接口、检索与下载都能单独跑，�
   assert.ok(/没有|不存在|目录/u.test(String(download.data.error || '')), '要说明为什么下不了：' + download.data.error)
 })
 
-await step('整合包市场：附属开关默认开，关掉后状态里也如实反映', async () => {
+await step('社区资源：附属开关默认开，关掉后状态里也如实反映', async () => {
   const st = await call('/dsh-modpack-kit/api/status')
-  assert.equal(typeof st.data.modpackMarket, 'object', 'status 要带整合包市场摘要')
+  assert.equal(typeof st.data.modpackMarket, 'object', 'status 要带社区资源摘要')
   assert.equal(st.data.modpackMarket.repo, 'Vesna-Strivozha-cn/dsh-modpack-catalog', '目录来源要固定指向自建仓库')
   assert.equal(st.data.config.showModpackMarket, true, '默认开启')
   const off = await call('/dsh-modpack-kit/api/settings', { method: 'POST', body: { patch: { showModpackMarket: false } } })

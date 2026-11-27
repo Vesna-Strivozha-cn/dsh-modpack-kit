@@ -1532,7 +1532,7 @@ window.__ModuleLoader__.load({
         setError("")
       }), [])
 
-      // 从「整合包市场」点「下载并安装」过来：包已经在后端取回、校验并换成 token，
+      // 从「社区资源」点「下载并安装」过来：包已经在后端取回、校验并换成 token，
       // 这里接住直接读一遍预览，后面的勾选、扫描、兼容提示走的是同一条安装流程。
       useEffect(() => subscribeInstallRequest((payload) => {
         if (!payload || !payload.token) return
@@ -2108,10 +2108,10 @@ window.__ModuleLoader__.load({
           marketSidebarMsg ? h("div", { style: hint }, marketSidebarMsg) : null,
           saved ? h("span", { style: hint }, saved) : null),
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
-          h("div", { style: strong }, "整合包市场（附属功能）"),
+          h("div", { style: strong }, "社区资源（附属功能）"),
           h(Switch, {
             checked: cfg.showModpackMarket !== false,
-            label: "显示「整合包市场」这一栏",
+            label: "显示「社区资源」这一栏",
             title: "插件自带、默认开启；关掉只是不显示这一栏",
             onChange: (v) => patch({ showModpackMarket: v }),
           }),
@@ -2120,7 +2120,7 @@ window.__ModuleLoader__.load({
             h("span", { style: label }, "自动更新（小时）"),
             h("input", { style: { ...input, width: "78px" }, type: "number", min: "1", max: "168", value: cfg.modpackRefreshHours || 24, onChange: (e) => setField("modpackRefreshHours", Number(e.target.value)) }),
             h("button", { style: btn, disabled: busy, onClick: () => patch({ modpackRefreshHours: cfg.modpackRefreshHours }) }, "保存")),
-          h("div", { style: hint }, "搜索、分类、详情与下载码都在「整合包市场」那一栏里；上传方式与规则点那一栏右上角。")),
+          h("div", { style: hint }, "搜索、分类、详情与下载码都在「社区资源」那一栏里；上传方式与规则点那一栏右上角。")),
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
           h("div", { style: strong }, "插件目录（分类 · 搜索 · 分页）"),
           h("div", { style: hint }, (() => {
@@ -2139,7 +2139,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    // —— 整合包市场 ——
+    // —— 社区资源 ——
     // 「从市场下载」到「安装页」之间只有一次交接：市场负责下载、校验、把 token 递过去，
     // 识别 / 扫描 / 兼容 / 许可证 / 安装这些仍然由安装页那条老路做，不另起一套。
     const installRequest = { value: null, subs: new Set() }
@@ -2337,7 +2337,7 @@ window.__ModuleLoader__.load({
 
       const head = h("div", { style: { ...row, justifyContent: "space-between" } },
         h("div", { style: row },
-          h("span", { style: { ...strong, fontSize: "14px" } }, "整合包市场"),
+          h("span", { style: { ...strong, fontSize: "14px" } }, "社区资源"),
           present ? h(Tag, null, total + " 个") : null,
           present ? h("span", { style: hint }, "目录来自 " + (summary.repo || "dsh-modpack-catalog") + (summary.builtAt ? " · 构建于 " + String(summary.builtAt).slice(0, 10) : "")) : null),
         h("div", { style: row },
@@ -2558,15 +2558,47 @@ window.__ModuleLoader__.load({
         title: "把进度窗叫回右下角的默认位置（拖到角落挡住了界面就用这个）",
         onClick: () => { requestDockReset() },
       }, "召回进度窗")
+      const [eggMsg, setEggMsg] = useState("")
+      const eggClicks = useRef([])
+      const eggTimer = useRef(0)
+      useEffect(() => () => { if (eggTimer.current) clearTimeout(eggTimer.current) }, [])
+      const spotEgg = () => {
+        const now = Date.now()
+        eggClicks.current = eggClicks.current.concat(now).filter((at) => now - at < 1500)
+        if (eggClicks.current.length < 5) return
+        eggClicks.current = []
+        setEggMsg("不不不，我资源无疑是贫乏的")
+        if (eggTimer.current) clearTimeout(eggTimer.current)
+        eggTimer.current = setTimeout(() => { eggTimer.current = 0; setEggMsg("") }, 1000)
+      }
+      const eggNode = eggMsg
+        ? h("div", {
+          style: {
+            position: "fixed",
+            left: "50%",
+            bottom: "88px",
+            transform: "translateX(-50%)",
+            background: "rgba(18, 20, 26, 0.92)",
+            color: "#fff",
+            padding: "9px 16px",
+            borderRadius: "10px",
+            fontSize: "13px",
+            letterSpacing: "0.02em",
+            boxShadow: "0 8px 24px rgba(0, 0, 0, 0.28)",
+            pointerEvents: "none",
+            zIndex: 80,
+          },
+        }, eggMsg)
+        : null
       const tabs = [
         ["pack", "打包"],
         ["install", "安装 / 导入"],
-        ...((status && status.config && status.config.showModpackMarket === false) ? [] : [["market", "整合包市场"]]),
+        ...((status && status.config && status.config.showModpackMarket === false) ? [] : [["market", "社区资源"]]),
         ["settings", "设置与记录"],
       ]
       const tabBtn = (key, text) => h("button", {
         key,
-        onClick: () => setTab(key),
+        onClick: () => { setTab(key); if (key === "market") spotEgg() },
         style: {
           ...btn,
           fontSize: embedded ? "12px" : btn.fontSize,
@@ -2616,6 +2648,7 @@ window.__ModuleLoader__.load({
         },
           h("div", { style: { maxWidth: "1020px", margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: "10px" } },
             h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine, refreshNote ? h("span", { style: hint }, refreshNote) : null, refreshMsg ? h("span", { style: { ...hint, color: "#ff6b6b" } }, refreshMsg) : null, recallBtn, refreshBtn),
+          eggNode,
           unlagNode,
             panels,
             footNote,
@@ -2632,6 +2665,7 @@ window.__ModuleLoader__.load({
             h("h2", { style: { margin: 0, fontSize: "20px", fontWeight: 600 } }, "整合包"),
             h("span", { style: hint }, ((status && status.config && status.config.tagline) || "谁说 dsh 不能整整合包呢？（你说这几个插件整一块不牛逼坏了）"))),
           h("div", { style: row }, tabs.map(([key, text]) => tabBtn(key, text)), envLine, refreshNote ? h("span", { style: hint }, refreshNote) : null, refreshMsg ? h("span", { style: { ...hint, color: "#ff6b6b" } }, refreshMsg) : null, recallBtn, refreshBtn),
+          eggNode,
           panels,
           footNote,
           h(RepoFooter, null)),
