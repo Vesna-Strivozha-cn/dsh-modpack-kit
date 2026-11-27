@@ -188,6 +188,10 @@ window.__ModuleLoader__.load({
       }
       let data = null
       try { data = await res.json() } catch {
+        // 宿主还跑着旧代码时，新接口会返回 404/405 且不是 JSON：把话说清楚，别只丢一句技术错误
+        if (res.status === 404 || res.status === 405) {
+          throw new Error("这个接口在当前运行的 DSH 里还没加载（HTTP " + res.status + "）：重启一次 DSH 后生效")
+        }
         throw new Error("服务端返回了非 JSON（HTTP " + res.status + "）")
       }
       if (!res.ok) {
@@ -2180,6 +2184,7 @@ window.__ModuleLoader__.load({
       const [msg, setMsg] = useState("")
       const [detail, setDetail] = useState(null)
       const [downloading, setDownloading] = useState(false)
+      const [reloadKey, setReloadKey] = useState(0)
       const mounted = useRef(true)
       useEffect(() => () => { mounted.current = false }, [])
 
@@ -2193,13 +2198,16 @@ window.__ModuleLoader__.load({
 
       useEffect(() => {
         let alive = true
+        setLoading(true)
         api("/market").then((data) => {
           if (!alive) return
           applyData(data)
           setError("")
         }).catch((e) => { if (alive) setError((e && e.message) || String(e)) }).finally(() => { if (alive) setLoading(false) })
         return () => { alive = false }
-      }, [])
+      }, [reloadKey])
+
+      const retry = () => { setError(""); setMsg(""); setLoading(true); setReloadKey((n) => n + 1) }
 
       // 搜索 / 分类 / 排序都走服务端分页：客户端只拿一页，目录再大也不卡
       useEffect(() => {
@@ -2334,11 +2342,19 @@ window.__ModuleLoader__.load({
         head,
         !present
           ? h("div", { style: { border: "1px dashed var(--dsw-alias-border-l2)", borderRadius: "10px", padding: "16px", display: "flex", flexDirection: "column", gap: "8px" } },
-            h("span", { style: strong }, loading ? "正在读取整合包目录…" : "还没有整合包目录"),
-            h("span", { style: hint }, "第一次用要先从目录仓库拉一次清单（很小，只有几百 KB）。"),
+            h("span", { style: strong }, loading ? "正在读取整合包目录…" : error ? "整合包市场没加载出来" : "还没有整合包目录"),
+            h("span", { style: hint }, loading
+              ? "先读本地缓存，读不到就从目录仓库拉一次；这一步不该拖住整个页面。"
+              : error
+                ? String(error)
+                : "第一次用要先从目录仓库拉一次清单（很小，只有几百 KB）；也可能是目录里暂时还没有人提交整合包。"),
             h("div", { style: row },
               h("button", { type: "button", style: btnPrimary, disabled: syncing || loading, onClick: syncNow }, syncing ? "更新中…" : "更新目录"),
-              error ? h("span", { style: { ...hint, color: "#ff6b6b" } }, error) : null))
+              h("button", { type: "button", style: btn, disabled: loading, onClick: retry }, "重试"),
+              h("button", { type: "button", style: chipBtn, onClick: () => { setView("rules"); setDetail(null) } }, "上传方式与规则")),
+            /重启|HTTP 40[45]|连不上/u.test(String(error || ""))
+              ? h("span", { style: { ...hint, lineHeight: "19px" } }, "网络正常但接口报 404/405 的话，是宿主还跑着旧代码：把 DSH 完全退出再打开，这一栏就会生效。")
+              : null)
           : h("div", { style: { display: "flex", gap: "12px", alignItems: "flex-start" } },
             h("div", { style: { width: "132px", flexShrink: 0, display: "flex", flexDirection: "column", gap: "4px" } },
               chips.map((chip) => h("button", {
@@ -2372,7 +2388,15 @@ window.__ModuleLoader__.load({
                 }, MARKET_SORTS.map(([value, text]) => h("option", { key: value, value }, text)))),
               searching && items.length === 0 ? h("span", { style: hint }, "检索中…") : null,
               items.length === 0 && !searching
-                ? h("div", { style: { ...hint, padding: "18px 0" } }, query ? "没有匹配的整合包。" : "这个分类下还没有整合包。")
+                ? h("div", { style: { border: "1px dashed var(--dsw-alias-border-l2)", borderRadius: "10px", padding: "16px", display: "flex", flexDirection: "column", gap: "8px" } },
+                  h("span", { style: strong }, query ? "没有匹配的整合包" : "这个分类下还没有整合包"),
+                  h("span", { style: hint }, query
+                    ? "换个说法试试：整合包名、作者名、插件名（例如 B站、壁纸、记忆）都能搜。"
+                    : "目录是空的：要么还没人提交，要么本地缓存太旧。可以先更新目录看看，或去「上传方式与规则」自己提交一个。"),
+                  h("div", { style: row },
+                    query ? h("button", { type: "button", style: btn, onClick: () => { setQuery(""); setCategory("all") } }, "清空搜索") : null,
+                    h("button", { type: "button", style: btn, disabled: syncing, onClick: syncNow }, syncing ? "更新中…" : "更新目录"),
+                    h("button", { type: "button", style: chipBtn, onClick: () => { setView("rules"); setDetail(null) } }, "上传方式与规则")))
                 : h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "10px" } },
                   items.map((pack) => h("div", {
                     key: "pack-" + pack.id,
