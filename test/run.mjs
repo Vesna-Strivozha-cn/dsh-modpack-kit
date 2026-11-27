@@ -2074,8 +2074,31 @@ test('下载量与语言：只算安装文件本身，界面语言可切、英�
   for (const piece of ['localeStore', 'const setLocale', 'const tr =', 'const useLocale', '"English"', 'tr("marketSearch")', 'tr("downloadInstall")', 'const descOf']) {
     assert(cli.includes(piece), '缺少：' + piece)
   }
-  assert(/cfg\.uiLocale === "en" \? btnPrimary : btn/u.test(cli), '语言按钮要跟着当前语言高亮')
+  assert(/locale === "en" \? btnPrimary : btn/u.test(cli), '语言按钮要跟着当前语言高亮')
   assert(/currentLocale\(\) === "en" \? \(d\.en \|\| d\.zh\)/u.test(cli), '英文界面优先英文说明')
+})
+
+test('体量词条与水槽：按插件总数自动分档，类型太杂归到水槽，语言切换立刻生效', () => {
+  const catalog = fs.readFileSync(new URL('../lib/modpack-catalog.mjs', import.meta.url), 'utf8')
+  assert(/export function tierOf/u.test(catalog), '体量档位要有纯函数')
+  assert(/\{ id: 'small', min: 0, max: 3 \}/u.test(catalog), '0-3 轻量')
+  assert(/\{ id: 'medium', min: 4, max: 8 \}/u.test(catalog), '4-8 中型')
+  assert(/\{ id: 'large', min: 9, max: 12 \}/u.test(catalog), '9-12 大型')
+  assert(/id: 'huge', min: 13/u.test(catalog), '13+ 大宗')
+  assert(catalog.includes("{ id: 'sink', label: '水槽' }"), '分类里要有水槽')
+  const builder = fs.readFileSync(new URL('../../_market/modpack-catalog/scripts/build.mjs', import.meta.url), 'utf8')
+  assert(/function tierOf\(count\)/u.test(builder), '构建脚本也要算档位')
+  assert(builder.includes("pack.category = '水槽'"), '三种以上场景就归到水槽')
+  assert(/kinds.size >= 3/u.test(builder), '水槽判定看插件分类种类数')
+  const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  for (const piece of ['const tierInfo', 'const tierTag', 'TIER_KEYS', 'tierSmall', 'tierHuge', 'const catLabel', 'CATEGORY_EN']) {
+    assert(cli.includes(piece), '缺少：' + piece)
+  }
+  // 语言按钮高亮跟当前语言走：切页回来不能停在中文
+  assert(/const locale = useLocale\(\)/u.test(cli), '设置面板要订阅当前语言')
+  assert(/style: locale === "en" \? btnPrimary : btn/u.test(cli), '英文模式要高亮 English')
+  assert(/const tr = \(key, vars\)/u.test(cli), 'tr 要支持占位替换')
+  assert(!/cfg\.uiLocale === "en" \? btn/u.test(cli), '不要再拿 status 里的旧配置判高亮')
 })
 
 for (const [state, name, detail] of results) {

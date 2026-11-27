@@ -61,6 +61,10 @@ dsh plugin --profile desktop add github:Vesna-Strivozha-cn/dsh-modpack-kit
 * 已装的默认跳过，可选换成包内版本。
 
 ## 整合包市场
+
+- 体量词条：按插件总数自动判定（0-3 轻量 / 4-8 中型 / 9-12 大型 / 13+ 大宗），目录条目里存成 `tier`，客户端只用不猜。
+- 水槽：构建时把包里每个插件映射到插件市场分类，跨 ≥3 类就强制 `category = 水槽`，避免「什么都有」的包被塞进单一场景。
+- 语言：`config.uiLocale` 只影响本插件的界面与本地文案；整合包说明优先 `description.en`。
 - 条目字段：id / name / author / category / version / strategy（只收 lite）/ file / sha256 / size / createdAt / updatedAt / description{zh,en} / plugins[{name,version,description}] / downloads。
 - downloads 指这个 .dshpack 安装文件本身被下载的次数；目录只存元数据、不搬文件，所以没有可靠计数渠道时就是 0，不会把包里插件的 npm 下载量相加。
 - 上传要求中英双语：description.zh 与 description.en 都必填，构建脚本会挡。

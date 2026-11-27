@@ -1202,7 +1202,7 @@ window.__ModuleLoader__.load({
       // 停在风险点的任务：按插件分栏列出命中项，确认/删除都在这里做
       const pausedRiskNodes = []
       if (pausedJobs.length > 0) {
-        pausedRiskNodes.push(h("div", { key: "title", style: { ...strong, color: "#ff6b6b" } }, "打包停在风险点（" + pausedJobs.length + " 个任务）"))
+        pausedRiskNodes.push(h("div", { key: "title", style: { ...strong, color: "#ff6b6b" } }, tr("pausedAtRisk", { n: pausedJobs.length })))
         pausedRiskNodes.push(h("div", { key: "hint", style: hint }, "下面是每个插件自己的命中项。确认后原任务从这个检测点接着跑完，不再重复检测。"))
         for (const job of pausedJobs) {
           const groupNodes = (job.risk.groups || []).map((group, index) => {
@@ -1353,7 +1353,7 @@ window.__ModuleLoader__.load({
           h("div", { style: hint }, "目录中存在同名插件时，该条目末尾提供「（切换市场版）」入口：可将打包源切换为上架市场的上游原版，安装结果与从市场安装一致。")),
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "10px" } },
           h("div", { style: row },
-            h("div", { style: strong }, "选择插件"),
+            h("div", { style: strong }, tr("secPackList")),
             h("input", {
               style: { ...input, flex: "1 1 200px" },
               placeholder: aiOn && aiReady ? "用一句话描述你要的插件（回车让 AI 在目录里挑）" : "搜索插件名 / 描述（在插件市场目录里搜）",
@@ -1415,7 +1415,7 @@ window.__ModuleLoader__.load({
             : "首屏只列本机已装。插件自带的内部组件（随父包一起装的那种）不单独列出" + (props.status && props.status.installedHidden ? "（本次隐藏 " + props.status.installedHidden + " 个）" : "") + "。每行最前面标出当前来源：市场版按上游版本取包，本机版取本机这份。勾选时默认「插件预设」——只打插件默认配置；要带上本机的配置条目与数据快照就改成「自定义配置」（本机版还会连代码改动一起打）。本机已装且市场里有同名条目的，默认按市场版勾选；要打本机这份就点行末「改为本机版」。搜索或点分类才去插件市场目录里查，服务端分页、一次一页。搜索结果里没装的插件也能直接勾选——打包时按版本从插件市场取包，装的时候同样从市场下载。")
         ),
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
-          h("div", { style: strong }, "打包策略（必选）"),
+          h("div", { style: strong }, tr("secStrategy")),
           h("div", { style: hint }, "三选一，可不可选按你勾的插件实时判定：灰掉的那张整块变灰，点一下会弹出原因。安全检测在服务端强制进行，不提供关闭；版本号不能手改，只显示所选来源的版本。"),
           h("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap" } },
             (planEntries.length ? planEntries : STRATEGY_INFO.map((item) => ({ ...item, ok: true }))).map((item) => {
@@ -1464,7 +1464,7 @@ window.__ModuleLoader__.load({
           h("input", { style: { ...input, width: "100%" }, placeholder: "一句话描述（可空）", value: options.description, onChange: (e) => setOptions({ ...options, description: e.target.value }) }),
           h(Switch, { checked: options.confirmLicense, label: "我确认所选插件的许可证允许再分发，或已获得作者授权", onChange: (v) => setOptions({ ...options, confirmLicense: v }) }),
           h("div", { style: row },
-            h("button", { style: btnPrimary, disabled: picked.length === 0 || busy === "start" || Boolean(currentBlocked), onClick: doPack }, busy === "start" ? "提交中…" : (currentBlocked ? "先换个可用的策略" : ("打包 " + picked.length + " 个插件"))),
+            h("button", { style: btnPrimary, disabled: picked.length === 0 || busy === "start" || Boolean(currentBlocked), onClick: doPack }, busy === "start" ? tr("btnSubmitting") : (currentBlocked ? tr("btnNeedStrategy") : tr("btnPack", { n: picked.length }))),
             started ? h("span", { style: hint }, "已开始：" + started + "（进度在左下角，可以接着选别的再打一个）") : null,
             status ? h("span", { style: hint }, "DSH " + (status.dshVersion || "?") + " · profile " + status.profile) : null)),
         pausedRiskNodes.length ? h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "10px", borderColor: "#d9534f" } }, pausedRiskNodes) : null,
@@ -1493,7 +1493,7 @@ window.__ModuleLoader__.load({
           result.compat ? h(CompatList, { compat: result.compat }) : null,
           result.notes && result.notes.length ? h("div", { style: { ...hint, maxHeight: "110px", overflow: "auto" } }, result.notes.map((n, i) => h("div", { key: i }, "· " + n))) : null,
           result.refused || result.error ? null : h("div", { style: row },
-            h("button", { style: btnPrimary, disabled: busy !== "", onClick: downloadPack }, busy === "download" ? "准备下载…" : "下载 .dshpack"),
+            h("button", { style: btnPrimary, disabled: busy !== "", onClick: downloadPack }, busy === "download" ? tr("btnPreparing") : tr("btnDownloadPack")),
             h("button", { style: btn, disabled: busy !== "", onClick: savePack }, busy === "save" ? "保存中…" : "保存到本机 packs/"),
             result.savedPath ? h("span", { style: hint }, "已存：" + result.savedPath) : null),
           result.refused || result.error ? null : h("div", { style: hint }, "下载后可在「安装 / 导入」页签读回，或将该文件转交他人。"))
@@ -1722,7 +1722,7 @@ window.__ModuleLoader__.load({
         imports.length > 0
           ? h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
             h("div", { style: row },
-              h("div", { style: strong }, "已导入的整合包"),
+              h("div", { style: strong }, tr("secImported")),
               h("span", { style: hint }, imports.length + " 份 · 可以同时留着，各自显示打包时的名字、作者与描述"),
               h("button", { style: { ...chipBtn, marginLeft: "auto" }, onClick: () => setImports([]) }, "全部移除")),
             h("div", { style: { display: "flex", flexDirection: "column", gap: "8px", maxHeight: "260px", overflow: "auto" } },
@@ -1763,8 +1763,8 @@ window.__ModuleLoader__.load({
           : null,
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "10px" } },
           h("div", { style: row },
-            h("button", { style: source.kind === "url" ? btnPrimary : btn, onClick: () => setSource({ ...source, kind: "url" }) }, "从链接读取"),
-            h("button", { style: source.kind === "file" ? btnPrimary : btn, onClick: () => setSource({ ...source, kind: "file" }) }, "从本机文件读取"),
+            h("button", { style: source.kind === "url" ? btnPrimary : btn, onClick: () => setSource({ ...source, kind: "url" }) }, tr("btnFromUrl")),
+            h("button", { style: source.kind === "file" ? btnPrimary : btn, onClick: () => setSource({ ...source, kind: "file" }) }, tr("btnFromFile")),
             h("input", {
               type: "file",
               accept: ".dshpack",
@@ -1811,13 +1811,13 @@ window.__ModuleLoader__.load({
             h(Switch, { checked: options.offline === true, label: "离线安装（不联网，直接用包里自带的）", onChange: (v) => setOptions({ ...options, offline: v ? true : undefined }) }),
             h(Switch, { checked: options.force, label: "忽略阻断（我知道自己在干什么）", onChange: (v) => setOptions({ ...options, force: v }) })),
           h("div", { style: row },
-            h("button", { style: btnPrimary, disabled: busy !== "" || (source.kind === "url" ? !source.url.trim() : !source.file), onClick: inspect }, busy === "inspect" ? "检测中…" : "检测这个包"),
+            h("button", { style: btnPrimary, disabled: busy !== "" || (source.kind === "url" ? !source.url.trim() : !source.file), onClick: inspect }, busy === "inspect" ? tr("btnInspecting") : tr("btnInspect")),
             source.kind === "file" && source.file ? h("span", { style: hint }, "选中：" + source.file) : null,
             source.kind === "token" ? h("span", { style: hint }, "这份是导入到列表里的包，已经读过一遍；点上面的「选择」可以换另一份") : null)),
         progress
           ? h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
             h("div", { style: row },
-              h("div", { style: strong }, "正在安装"),
+              h("div", { style: strong }, tr("secInstalling")),
               h("span", { style: hint }, (progress.note || "") + "　" + Math.round(progress.pct || 0) + "%")),
             h(ProgressBar, { pct: progress.pct }))
           : null,
@@ -1853,7 +1853,7 @@ window.__ModuleLoader__.load({
           preview.notes && preview.notes.length ? h("div", { style: hint }, preview.notes.map((n, i) => h("div", { key: i }, "· " + n))) : null,
           h("div", { style: row },
             h(Switch, { checked: options.dryRun, label: "只演练不落地", onChange: (v) => setOptions({ ...options, dryRun: v }) }),
-            h("button", { style: btnPrimary, disabled: busy !== "", onClick: install }, busy === "install" ? "安装中…" : (options.dryRun ? "演练一次" : "安装这个整合包"))))
+            h("button", { style: btnPrimary, disabled: busy !== "", onClick: install }, busy === "install" ? tr("btnInstalling") : (options.dryRun ? tr("btnDryRun") : tr("btnInstall")))))
           : null,
         askReplace && deferred.length > 0
           ? h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
@@ -1863,11 +1863,11 @@ window.__ModuleLoader__.load({
             h("div", { style: hint }, "要保留本机版本就直接完成；要换成包内版本点下面这个（会覆盖本机那份）。"),
             h("div", { style: row },
               h("button", { style: btn, disabled: busy !== "", onClick: () => { setAskReplace(false) } }, "直接完成（保留本机版本）"),
-              h("button", { style: btnPrimary, disabled: busy !== "", onClick: () => replaceDeferred(deferred.map((d) => d.name)) }, "替换为包内版本（" + deferred.length + " 个）")))
+              h("button", { style: btnPrimary, disabled: busy !== "", onClick: () => replaceDeferred(deferred.map((d) => d.name)) }, tr("btnReplace", { n: deferred.length }))))
           : null,
         done ? h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
           h("div", { style: row },
-            h("div", { style: strong }, done.ok ? "安装完成" : "没有装成"),
+            h("div", { style: strong }, done.ok ? tr("doneInstalled") : tr("doneFailed")),
             done.needsRestart ? h(Tag, { color: "#ffb020" }, "需要重启 DSH 生效") : null),
           done.error ? h("div", { style: { ...label, color: "#ff6b6b" } }, done.error) : null,
           (done.actions || []).map((a, i) => h("div", { key: i, style: { ...mono, color: a.ok ? "inherit" : "#ff6b6b" } },
@@ -1907,6 +1907,7 @@ window.__ModuleLoader__.load({
     }
 
     function SettingsPanel(props) {
+      const locale = useLocale()
       const [cfg, setCfg] = useState(props.status ? props.status.config : null)
       const [saved, setSaved] = useState("")
       const [busy, setBusy] = useState(false)
@@ -1999,11 +2000,11 @@ window.__ModuleLoader__.load({
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
           h("div", { style: strong }, tr("lang")),
           h("div", { style: row },
-            h("button", { type: "button", style: cfg.uiLocale === "en" ? btn : btnPrimary, onClick: () => { setField("uiLocale", "zh"); setLocale("zh"); patch({ uiLocale: "zh" }) } }, "中文"),
-            h("button", { type: "button", style: cfg.uiLocale === "en" ? btnPrimary : btn, onClick: () => { setField("uiLocale", "en"); setLocale("en"); patch({ uiLocale: "en" }) } }, "English")),
+            h("button", { type: "button", style: locale === "en" ? btn : btnPrimary, onClick: () => { setField("uiLocale", "zh"); setLocale("zh"); patch({ uiLocale: "zh" }) } }, "中文"),
+            h("button", { type: "button", style: locale === "en" ? btnPrimary : btn, onClick: () => { setField("uiLocale", "en"); setLocale("en"); patch({ uiLocale: "en" }) } }, "English")),
           h("div", { style: hint }, tr("langHint"))),
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "10px" } },
-          h("div", { style: strong }, "扫描与安装策略"),
+          h("div", { style: strong }, tr("secScan")),
           h("div", { style: row },
             h(ForcedSwitch, { label: "打包前扫描（强制）", onNag: () => fireScanNag("你想干什么") }),
             h(Switch, { checked: cfg.scanBeforeInstall !== false, label: "安装前扫描", onChange: (v) => { setField("scanBeforeInstall", v); patch({ scanBeforeInstall: v }) } }),
@@ -2034,7 +2035,7 @@ window.__ModuleLoader__.load({
                 setField("maxPackBytes", bytes)
                 patch({ maxPackBytes: bytes, maxDownloadBytes: cfg.maxDownloadBytes, maxFileBytes: cfg.maxFileBytes, maxMetadataBytes: cfg.maxMetadataBytes, netTimeoutSeconds: cfg.netTimeoutSeconds, netRetries: cfg.netRetries, curlFallback: cfg.curlFallback !== false, licenseAllow: cfg.licenseAllow, registries: cfg.registries, allowHosts: cfg.allowHosts })
               },
-            }, "保存数值"),
+            }, tr("btnSaveNumbers")),
             h("span", { style: hint }, "默认 256 MB，可填 16~4096"),
             saved ? h("span", { style: hint }, saved) : null)),
           h("div", { style: row },
@@ -2051,7 +2052,7 @@ window.__ModuleLoader__.load({
             })),
           h("div", { style: hint }, "registry 报 fetch failed / 超时，多半是代理或证书链：调大超时、加一次重试，或让 curl 兜底（走系统证书库）。提示「下载超过上限」时是版本清单太大（billion-context 这类包的清单十几 MB）：把「版本清单上限」调大，或改用确定的版本号（插件会直接取单版本清单，体积最小）。保存后立即生效。"),
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
-          h("div", { style: strong }, "信任清单"),
+          h("div", { style: strong }, tr("secTrust")),
           h("div", { style: hint }, "允许的许可证（一行一个，例如 MIT）："),
           h("textarea", { style: { ...input, height: "62px", padding: "6px 8px", width: "100%", resize: "vertical" }, value: textList("licenseAllow"), onChange: (e) => setField("licenseAllow", e.target.value.split("\n")) }),
           h("div", { style: hint }, "允许的下载域名（一行一个，只走 https）："),
@@ -2059,9 +2060,9 @@ window.__ModuleLoader__.load({
           h("div", { style: hint }, "npm 源（按顺序回退）："),
           h("textarea", { style: { ...input, height: "62px", padding: "6px 8px", width: "100%", resize: "vertical" }, value: textList("registries"), onChange: (e) => setField("registries", e.target.value.split("\n")) }),
           h("div", { style: row },
-            h("button", { style: btn, disabled: busy, onClick: () => patch({ licenseAllow: cfg.licenseAllow.filter(Boolean), allowHosts: cfg.allowHosts.filter(Boolean), registries: cfg.registries.filter(Boolean) }) }, "保存清单"))),
+            h("button", { style: btn, disabled: busy, onClick: () => patch({ licenseAllow: cfg.licenseAllow.filter(Boolean), allowHosts: cfg.allowHosts.filter(Boolean), registries: cfg.registries.filter(Boolean) }) }, tr("btnSaveTrust")))),
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
-          h("div", { style: strong }, "位置"),
+          h("div", { style: strong }, tr("secPaths")),
           h("div", { style: mono }, "profile：" + ((props.status && props.status.paths && props.status.paths.profile) || "?")),
           h("div", { style: mono }, "整合包：" + ((props.status && props.status.paths && props.status.paths.packs) || "?")),
           h("div", { style: mono }, "缓存与暂存：" + ((props.status && props.status.paths && props.status.paths.vendor) || "?")),
@@ -2097,7 +2098,7 @@ window.__ModuleLoader__.load({
                 h("button", { type: "button", style: btn, onClick: () => dropHistory(null, true) }, "清空记录"),
                 historyMsg ? h("span", { style: hint }, historyMsg) : null))),
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
-          h("div", { style: strong }, "显示位置"),
+          h("div", { style: strong }, tr("secPlacement")),
           h("div", { style: hint }, "三处互相独立，一点就生效，不用重启。关掉只是不挂载入口，功能与接口都还在。至少留一处：只剩一个时，那个开关会变灰、点不动。"),
           h("div", { style: { display: "flex", flexDirection: "column", gap: "6px" } },
             h(Switch, { checked: cfg.showInSettings !== false, disabled: placementLocked("showInSettings"), label: "在设置里显示（插件设置页内一栏「整合包」）" + (placementLocked("showInSettings") ? "（最后剩这一个，不能关）" : ""), onChange: (v) => savePlacement("showInSettings", v) }),
@@ -2114,7 +2115,7 @@ window.__ModuleLoader__.load({
           marketSidebarMsg ? h("div", { style: hint }, marketSidebarMsg) : null,
           saved ? h("span", { style: hint }, saved) : null),
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
-          h("div", { style: strong }, "整合包市场（附属功能）"),
+          h("div", { style: strong }, tr("secMarket")),
           h(Switch, {
             checked: cfg.showModpackMarket !== false,
             label: "显示「整合包市场」这一栏",
@@ -2125,10 +2126,10 @@ window.__ModuleLoader__.load({
           h("div", { style: row },
             h("span", { style: label }, "自动更新（小时）"),
             h("input", { style: { ...input, width: "78px" }, type: "number", min: "1", max: "168", value: cfg.modpackRefreshHours || 24, onChange: (e) => setField("modpackRefreshHours", Number(e.target.value)) }),
-            h("button", { style: btn, disabled: busy, onClick: () => patch({ modpackRefreshHours: cfg.modpackRefreshHours }) }, "保存")),
+            h("button", { style: btn, disabled: busy, onClick: () => patch({ modpackRefreshHours: cfg.modpackRefreshHours }) }, tr("btnSave"))),
           h("div", { style: hint }, "搜索、分类、详情与下载码都在「整合包市场」那一栏里；上传方式与规则点那一栏右上角。")),
         h("div", { style: { ...box, display: "flex", flexDirection: "column", gap: "8px" } },
-          h("div", { style: strong }, "插件目录（分类 · 搜索 · 分页）"),
+          h("div", { style: strong }, tr("secCatalog")),
           h("div", { style: hint }, (() => {
             const c = props.status && props.status.catalog
             if (!c || !c.present) return "本地还没有目录索引；要按分类找插件、要搜索时，先在这里或打包页建一次。"
@@ -2139,7 +2140,7 @@ window.__ModuleLoader__.load({
             h("input", { style: { ...input, width: "78px" }, type: "number", min: "5", max: "100", value: cfg.catalogPageSize || 20, onChange: (e) => setField("catalogPageSize", Number(e.target.value)) }),
             h("span", { style: label }, "自动更新（小时）"),
             h("input", { style: { ...input, width: "78px" }, type: "number", min: "1", max: "168", value: cfg.catalogRefreshHours || 24, onChange: (e) => setField("catalogRefreshHours", Number(e.target.value)) }),
-            h("button", { style: btn, disabled: busy, onClick: () => patch({ catalogPageSize: cfg.catalogPageSize, catalogRefreshHours: cfg.catalogRefreshHours }) }, "保存目录设置")),
+            h("button", { style: btn, disabled: busy, onClick: () => patch({ catalogPageSize: cfg.catalogPageSize, catalogRefreshHours: cfg.catalogRefreshHours }) }, tr("btnSaveCatalog"))),
           h("div", { style: hint }, "目录就是插件市场自己发布的那份 dsh-plugin-catalog：CDN 优先，失败退回 npm 包。分类与词条都照它来，本插件不另造一套。"),
           h(RepoFooter, null))
       )
@@ -2175,33 +2176,152 @@ window.__ModuleLoader__.load({
     const subscribeLocale = (fn) => { localeStore.subs.add(fn); return () => { localeStore.subs.delete(fn) } }
     const S = {
       zh: {
-        pack: "打包", install: "安装 / 导入", market: "整合包市场", settings: "设置与记录",
-        refresh: "刷新", refreshing: "刷新中…", refreshFail: "刷新失败", refreshOk: "刷新 ✓",
-        recallDock: "召回进度窗",
-        marketTitle: "整合包市场", marketSearch: "搜索整合包", name: "名称", type: "类型", sort: "排序",
-        searchBtn: "搜索", resetBtn: "重置条件", installExisting: "安装已有整合包",
-        uploadRules: "上传方式与规则", backMarket: "← 返回市场", backList: "← 返回列表",
-        downloadInstall: "下载并安装", downloading: "下载中…", readMarket: "正在读取整合包目录…",
-        pluginsIncluded: "包含的插件（这些插件会干什么）", downloadCode: "下载码", whatItDoes: "这个整合包是做什么的",
-        lang: "界面语言 / Interface language", langHint: "只改这个插件的界面文字；插件市场与 DSH 本体不受影响。",
-        loading: "正在读取…", retry: "重试",
+       "pack": "打包",
+       "install": "安装 / 导入",
+       "market": "整合包市场",
+       "settings": "设置与记录",
+       "refresh": "刷新",
+       "refreshing": "刷新中…",
+       "refreshFail": "刷新失败",
+       "refreshOk": "刷新 ✓",
+       "recallDock": "召回进度窗",
+       "marketTitle": "整合包市场",
+       "marketSearch": "搜索整合包",
+       "name": "名称",
+       "type": "类型",
+       "sort": "排序",
+       "searchBtn": "搜索",
+       "resetBtn": "重置条件",
+       "installExisting": "安装已有整合包",
+       "uploadRules": "上传方式与规则",
+       "backMarket": "← 返回市场",
+       "backList": "← 返回列表",
+       "downloadInstall": "下载并安装",
+       "downloading": "下载中…",
+       "readMarket": "正在读取整合包目录…",
+       "pluginsIncluded": "包含的插件（这些插件会干什么）",
+       "downloadCode": "下载码",
+       "whatItDoes": "这个整合包是做什么的",
+       "lang": "界面语言 / Interface language",
+       "langHint": "只改这个插件的界面文字；插件市场与 DSH 本体不受影响。",
+       "loading": "正在读取…",
+       "retry": "重试",
+       "tierSmall": "轻量",
+       "tierMedium": "中型",
+       "tierLarge": "大型",
+       "tierHuge": "大宗",
+       "secPackList": "选择插件",
+       "secStrategy": "打包策略（必选）",
+       "secImported": "已导入的整合包",
+       "secInstalling": "正在安装",
+       "secScan": "扫描与安装策略",
+       "secTrust": "信任清单",
+       "secPaths": "位置",
+       "secPlacement": "显示位置",
+       "secMarket": "整合包市场（附属功能）",
+       "secCatalog": "插件目录（分类 · 搜索 · 分页）",
+       "btnPack": "打包 {n} 个插件",
+       "btnSubmitting": "提交中…",
+       "btnNeedStrategy": "先换个可用的策略",
+       "btnDownloadPack": "下载 .dshpack",
+       "btnPreparing": "准备下载…",
+       "btnFromUrl": "从链接读取",
+       "btnFromFile": "从本机文件读取",
+       "btnInspect": "检测这个包",
+       "btnInspecting": "检测中…",
+       "btnInstall": "安装这个整合包",
+       "btnInstalling": "安装中…",
+       "btnDryRun": "演练一次",
+       "btnReplace": "替换为包内版本（{n} 个）",
+       "btnSave": "保存",
+       "btnSaveNumbers": "保存数值",
+       "btnSaveTrust": "保存清单",
+       "btnSaveCatalog": "保存目录设置",
+       "doneInstalled": "安装完成",
+       "doneFailed": "没有装成",
+       "pausedAtRisk": "打包停在风险点（{n} 个任务）",
+       "emptyNoMatch": "没有匹配的整合包",
+       "emptyNoCategory": "这个类型下还没有整合包",
+       "emptyNoCatalog": "还没有整合包目录",
+       "installPreview": "先看清楚，再装"
       },
       en: {
-        pack: "Pack", install: "Install / Import", market: "Modpack Market", settings: "Settings & History",
-        refresh: "Refresh", refreshing: "Refreshing…", refreshFail: "Refresh failed", refreshOk: "Refreshed ✓",
-        recallDock: "Recall progress",
-        marketTitle: "Modpack Market", marketSearch: "Search modpacks", name: "Name", type: "Type", sort: "Sort",
-        searchBtn: "Search", resetBtn: "Reset", installExisting: "Install existing pack",
-        uploadRules: "How to submit & rules", backMarket: "← Back to market", backList: "← Back to list",
-        downloadInstall: "Download & install", downloading: "Downloading…", readMarket: "Reading modpack catalog…",
-        pluginsIncluded: "Plugins in this pack (what they do)", downloadCode: "Download code", whatItDoes: "What this modpack is for",
-        lang: "界面语言 / Interface language", langHint: "Only changes this plugin's UI text; the plugin market and DSH itself are untouched.",
-        loading: "Loading…", retry: "Retry",
+       "pack": "Pack",
+       "install": "Install / Import",
+       "market": "Modpack Market",
+       "settings": "Settings & History",
+       "refresh": "Refresh",
+       "refreshing": "Refreshing…",
+       "refreshFail": "Refresh failed",
+       "refreshOk": "Refreshed ✓",
+       "recallDock": "Recall progress",
+       "marketTitle": "Modpack Market",
+       "marketSearch": "Search modpacks",
+       "name": "Name",
+       "type": "Type",
+       "sort": "Sort",
+       "searchBtn": "Search",
+       "resetBtn": "Reset",
+       "installExisting": "Install existing pack",
+       "uploadRules": "How to submit & rules",
+       "backMarket": "← Back to market",
+       "backList": "← Back to list",
+       "downloadInstall": "Download & install",
+       "downloading": "Downloading…",
+       "readMarket": "Reading modpack catalog…",
+       "pluginsIncluded": "Plugins in this pack (what they do)",
+       "downloadCode": "Download code",
+       "whatItDoes": "What this modpack is for",
+       "lang": "界面语言 / Interface language",
+       "langHint": "Only changes this plugin's UI text; the plugin market and DSH itself are untouched.",
+       "loading": "Loading…",
+       "retry": "Retry",
+       "tierSmall": "Light",
+       "tierMedium": "Medium",
+       "tierLarge": "Large",
+       "tierHuge": "Huge",
+       "secPackList": "Plugins to include",
+       "secStrategy": "Pack strategy (required)",
+       "secImported": "Imported packs",
+       "secInstalling": "Installing",
+       "secScan": "Scan & install policy",
+       "secTrust": "Trust list",
+       "secPaths": "Paths",
+       "secPlacement": "Where it shows",
+       "secMarket": "Modpack market (optional)",
+       "secCatalog": "Plugin catalog (category · search · paging)",
+       "btnPack": "Pack {n} plugins",
+       "btnSubmitting": "Submitting…",
+       "btnNeedStrategy": "Pick a usable strategy first",
+       "btnDownloadPack": "Download .dshpack",
+       "btnPreparing": "Preparing…",
+       "btnFromUrl": "From a link",
+       "btnFromFile": "From a local file",
+       "btnInspect": "Inspect this pack",
+       "btnInspecting": "Inspecting…",
+       "btnInstall": "Install this modpack",
+       "btnInstalling": "Installing…",
+       "btnDryRun": "Dry run",
+       "btnReplace": "Replace with bundled versions ({n})",
+       "btnSave": "Save",
+       "btnSaveNumbers": "Save limits",
+       "btnSaveTrust": "Save lists",
+       "btnSaveCatalog": "Save catalog settings",
+       "doneInstalled": "Installed",
+       "doneFailed": "Install failed",
+       "pausedAtRisk": "Paused on risk ({n} tasks)",
+       "emptyNoMatch": "No matching modpacks",
+       "emptyNoCategory": "Nothing in this category yet",
+       "emptyNoCatalog": "No modpack catalog yet",
+       "installPreview": "Read it through before installing"
       },
     }
-    const tr = (key) => {
+
+    const tr = (key, vars) => {
       const table = S[currentLocale()] || S.zh
-      return table[key] !== undefined ? table[key] : (S.zh[key] !== undefined ? S.zh[key] : key)
+      const found = table[key] !== undefined ? table[key] : (S.zh[key] !== undefined ? S.zh[key] : key)
+      if (!vars || typeof vars !== 'object') return found
+      return String(found).replace(/\{(\w+)\}/gu, (match, name) => (vars[name] !== undefined ? String(vars[name]) : match))
     }
     const useLocale = () => {
       const [value, setValue] = useState(currentLocale())
@@ -2322,7 +2442,7 @@ window.__ModuleLoader__.load({
 
       const categories = (summary && summary.categories) || []
       const chips = [{ id: "all", label: "全部", count: (summary && summary.count) || 0 }].concat(
-        categories.map((c) => ({ id: c.label, label: c.label, count: c.count || 0 })),
+        categories.map((c) => ({ id: c.label, label: catLabel(c.label), count: c.count || 0 })),
       )
       const present = Boolean(summary && summary.present)
       const sizeText = (bytes) => (bytes >= 1024 * 1024 ? Math.round((bytes / 1024 / 1024) * 10) / 10 + " MB" : Math.max(1, Math.round(bytes / 1024)) + " KB")
@@ -2331,8 +2451,23 @@ window.__ModuleLoader__.load({
         return n >= 10000 ? (n / 10000).toFixed(1) + " 万" : String(n)
       }
       // 目录里没有图片资源，就用名字前两个字做一块底色方块，跟 PCL 那种「占位图标」一个意思
-      const CATEGORY_TINT = { 工作办公: "#4C7DF0", 性能优化: "#2bb673", 界面美化: "#a855f7", 实用功能: "#0ea5e9", 开发调试: "#f59e0b", 娱乐休闲: "#ec4899", 学习资料: "#14b8a6", 其它: "#64748b" }
+      // 分类英文名（目录里只存中文 label，英文界面在这里映射）
+      const CATEGORY_EN = { 工作办公: "Office", 性能优化: "Performance", 界面美化: "Appearance", 实用功能: "Utilities", 开发调试: "Developer", 娱乐休闲: "Fun", 学习资料: "Learning", 水槽: "Everything bag", 其它: "Other" }
+      const catLabel = (name) => (currentLocale() === "en" ? (CATEGORY_EN[name] || name) : name)
+      const CATEGORY_TINT = { 工作办公: "#4C7DF0", 性能优化: "#2bb673", 界面美化: "#a855f7", 实用功能: "#0ea5e9", 开发调试: "#f59e0b", 娱乐休闲: "#ec4899", 学习资料: "#14b8a6", 水槽: "#7c3aed", 其它: "#64748b" }
       const initialsOf = (name) => String(name || "?").replace(/\s+/gu, "").slice(0, 2) || "?"
+      // 体量词条：不靠作者写，按插件总数自动算（0-3 轻量 / 4-8 中型 / 9-12 大型 / 13+ 大宗）
+      const TIER_KEYS = { small: "tierSmall", medium: "tierMedium", large: "tierLarge", huge: "tierHuge" }
+      const TIER_COLORS = { small: "#2bb673", medium: "#0ea5e9", large: "#f59e0b", huge: "#ec4899" }
+      const tierInfo = (pack) => {
+        const count = Array.isArray(pack.plugins) ? pack.plugins.length : 0
+        const id = pack.tier || (count >= 13 ? "huge" : count >= 9 ? "large" : count >= 4 ? "medium" : "small")
+        return { id, color: TIER_COLORS[id] || "#64748b", text: tr(TIER_KEYS[id] || "tierSmall") }
+      }
+      const tierTag = (pack) => {
+        const info = tierInfo(pack)
+        return h("span", { key: "tier-" + pack.id, style: { ...hint, color: info.color, border: "0.5px solid " + info.color, borderRadius: "99px", padding: "0 6px", lineHeight: "16px" } }, info.text)
+      }
       const descOf = (pack) => {
         const d = (pack && pack.description) || {}
         const text = currentLocale() === "en" ? (d.en || d.zh) : (d.zh || d.en)
@@ -2363,8 +2498,8 @@ window.__ModuleLoader__.load({
           h("div", { style: { flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "3px" } },
             h("div", { style: row },
               h("span", { style: { fontWeight: 600, fontSize: "13.5px" } }, pack.name),
-              h(Tag, null, pack.category || "其它"),
-              h(Tag, null, "轻量"),
+              h(Tag, null, catLabel(pack.category || "其它")),
+              tierTag(pack),
               h(Tag, null, "v" + pack.version),
               pack.installed && pack.installed.all ? h("span", { style: { ...hint, color: "#2bb673" } }, "已装") : null,
               pack.installed && pack.installed.some && !pack.installed.all ? h("span", { style: hint }, "部分已装") : null),
@@ -2405,7 +2540,8 @@ window.__ModuleLoader__.load({
           h("div", { style: row },
             h("button", { type: "button", style: chipBtn, onClick: () => { setView("list"); setDetail(null) } }, tr("backList")),
             h("span", { style: { ...strong, fontSize: "15px" } }, pack.name),
-            h(Tag, null, pack.category || "其它"),
+            h(Tag, null, catLabel(pack.category || "其它")),
+            tierTag(pack),
             h("span", { style: hint }, "v" + pack.version + " · 作者 " + (pack.author || "?") + " · " + sizeText(pack.size) + " · " + plugins.length + " 个插件")),
           h("div", { style: { ...hint, lineHeight: "20px" } },
             "下载 " + (Number(pack.downloads) || 0) + " 次（这个安装文件本身的下载量，不是里面插件的）"
@@ -2475,7 +2611,7 @@ window.__ModuleLoader__.load({
           h("span", { style: { ...hint, marginLeft: "auto" } }, "共 " + total + " 个")))
 
       const emptyCard = h("div", { style: { border: "1px dashed var(--dsw-alias-border-l2)", borderRadius: "10px", padding: "16px", display: "flex", flexDirection: "column", gap: "8px" } },
-        h("span", { style: strong }, query ? "没有匹配的整合包" : present ? "这个类型下还没有整合包" : "还没有整合包目录"),
+        h("span", { style: strong }, query ? tr("emptyNoMatch") : present ? tr("emptyNoCategory") : tr("emptyNoCatalog")),
         h("span", { style: hint }, query
           ? "换个说法试试：整合包名、作者名、插件名都能搜。"
           : present
