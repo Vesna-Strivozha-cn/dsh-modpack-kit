@@ -2159,6 +2159,21 @@ test('两个插件市场界面的分类次序都跟插件市场自己声明的�
   assert(cat.includes('const categoryOrder = new Map(index.categories.map((c, i) => [c.id, i]))'), '分类次序取自目录里的 categories')
 })
 
+test('社区资源：切到别的页再回来，大类、搜索框文字与列表都还是上次的样子', () => {
+  const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert(cli.includes('const marketUi = { value: { kind: "modpack", pack: null, plugin: null } }'), '要有模块级的社区资源状态')
+  assert(/function saveMarketUi\(slice, next\)/u.test(cli), '要能按层存快照')
+  assert(cli.includes('function saveMarketKind('), '大类也要记住')
+  assert(cli.includes('const pluginSnap = readMarketUi().plugin || {}'), '插件层挂载时读快照')
+  assert(cli.includes('const [query, setQuery] = useState(typeof pluginSnap.query === "string" ? pluginSnap.query : "")'), '搜索框里的字要恢复')
+  assert(cli.includes('const packSnap = readMarketUi().pack || {}'), '整合包层挂载时读快照')
+  assert(cli.includes('saveMarketUi("plugin", { query, category, sort, items, total, page, hasMore, chips })'), '插件层变化要写回')
+  assert(cli.includes('saveMarketUi("pack", { view, summary, items, total, page, hasMore, query, category, sort, detail, dataReady: true })'), '整合包层变化要写回')
+  assert(cli.includes('const restoredPack = useRef(packSnap.dataReady === true)'), '恢复过就别再首屏重拉')
+  assert(cli.includes('const skipFirstSearch = useRef(packSnap.dataReady === true)'), '恢复过就别用同一组条件再查一遍')
+  assert(cli.includes('exports.__marketUi = marketUi'), '给自测留个入口')
+})
+
 test('打包版本只记客户端给的那一版，不向 registry 校验；兼容建议跟打包策略走', () => {
   const pack = fs.readFileSync(new URL('../lib/pack.mjs', import.meta.url), 'utf8')
   assert(!/Object\.keys\(versions\)\[0\]/u.test(pack), '不能再用 versions 的第一个键当版本（那是最老的版本）')
@@ -2173,6 +2188,85 @@ test('打包版本只记客户端给的那一版，不向 registry 校验；兼�
   assert(/const canCarry = format === 'full' \|\| format === 'hybrid'/u.test(compat), '建议按策略给')
   assert(compat.includes('轻量包只记版本、不带别的东西'), '轻量包的依赖建议要写清楚')
   assert(/if \(canCarry && !plugin\.license\)/u.test(compat), '轻量包不再提许可证')
+})
+
+await testAsync('社区资源：恢复快照后，搜索框里的字与详情页跟上次一样', async () => {
+  const source = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  const React = {
+    createElement: (type, props, ...children) => ({ el: true, type, props: props || {}, children: children.flat(Infinity) }),
+    useState: (init) => [typeof init === 'function' ? init() : init, () => {}],
+    useEffect: () => {},
+    useLayoutEffect: () => {},
+    useCallback: (fn) => fn,
+    useMemo: (fn) => fn(),
+    useRef: (value) => ({ current: value }),
+    Fragment: 'fragment',
+  }
+  let mod = null
+  const win = { __ModuleLoader__: { load: ({ factory }) => { mod = factory((name) => {
+    if (name === 'react') return React
+    throw new Error('unexpected require: ' + name)
+  }) } } }
+  new Function('window', 'document', source)(win, { createElement: () => ({}), head: { appendChild() {} }, body: {} })
+  assert(mod && mod.__marketUi, '要导出 __marketUi 供自测')
+
+  const seen = []
+  const render = (node, depth = 0) => {
+    if (depth > 400 || node === null || node === undefined || typeof node === 'boolean') return
+    if (typeof node === 'string' || typeof node === 'number') return
+    if (Array.isArray(node)) { for (const child of node) render(child, depth + 1); return }
+    if (!node.el) return
+    seen.push(node)
+    if (typeof node.type === 'function') { render(node.type({ ...node.props, children: node.children }), depth + 1); return }
+    for (const child of node.children) render(child, depth + 1)
+  }
+  const status = {
+    ok: true, dshVersion: '0.0.0', pluginVersion: '0.1.3', profile: 'desktop',
+    installed: [], installedTotal: 0, bundled: [], history: [],
+    catalog: { present: true, categories: [], count: 0, pageSizeDefault: 20 },
+    config: { catalogPageSize: 20, showInSettings: true, showInSidebar: true, showInPluginsTab: false, showModpackMarket: true },
+    placements: { settings: true, sidebar: true, pluginsTab: false },
+    market: { installed: true },
+  }
+
+  // 上次停在「插件」，搜索框里写着「记忆」，列表已经读到一条
+  mod.__marketUi.value = {
+    kind: 'plugin',
+    pack: null,
+    plugin: {
+      query: '记忆', category: 'all', sort: 'market',
+      items: [{ name: 'dsh-plugin-memory', title: '记忆插件', category: 'memory', categoryLabel: '记忆', description: '长期记忆', version: '0.21.0' }],
+      total: 1, page: 1, hasMore: false, chips: [{ id: 'all', label: '全部', count: 1 }],
+    },
+  }
+  render(mod.MarketPanel({ status, onGoInstall: () => {} }))
+  const searchBox = seen.find((n) => n.type === 'input' && n.props.type === 'search')
+  assert(searchBox && searchBox.props.value === '记忆', '搜索框里的字要恢复成上次的「记忆」')
+  const text = seen.map((n) => (Array.isArray(n.children) ? n.children.join(' ') : '')).join(' ')
+  assert(text.includes('记忆插件'), '上次读到的列表也要在')
+
+  // 上次停在「整合包」的详情页，搜索框里写着「基础」
+  seen.length = 0
+  mod.__marketUi.value = {
+    kind: 'modpack',
+    plugin: mod.__marketUi.value.plugin,
+    pack: {
+      dataReady: true, view: 'detail', query: '基础', category: 'all', sort: 'new',
+      summary: { present: true, count: 1, categories: [{ label: '水槽', count: 1 }] },
+      items: [], total: 1, page: 1, hasMore: false,
+      detail: { id: 'test-basic', name: '测试基础包', category: '水槽', file: 'packs/test-basic.dshpack', sha256: 'a'.repeat(64), size: 12744, pluginCount: 9, plugins: [{ name: 'dsh-context', latest: true }] },
+    },
+  }
+  render(mod.MarketPanel({ status, onGoInstall: () => {} }))
+  const text2 = seen.map((n) => (Array.isArray(n.children) ? n.children.join(' ') : '')).join(' ')
+  assert(text2.includes('测试基础包'), '上次打开的详情要还在，不用重新点一遍')
+  assert(text2.includes('下载码'), '详情还是详情，不是回到列表')
+  // 回列表时，整合包层的搜索框文字也要还在
+  seen.length = 0
+  mod.__marketUi.value = { ...mod.__marketUi.value, pack: { ...mod.__marketUi.value.pack, view: 'list' } }
+  render(mod.MarketPanel({ status, onGoInstall: () => {} }))
+  const box2 = seen.find((n) => n.type === 'input' && n.props.type === 'search')
+  assert(box2 && box2.props.value === '基础', '整合包列表的搜索框也要恢复上次的字')
 })
 
 for (const [state, name, detail] of results) {

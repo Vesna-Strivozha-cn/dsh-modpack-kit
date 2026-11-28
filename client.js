@@ -85,6 +85,20 @@ window.__ModuleLoader__.load({
       return () => marketVis.subs.delete(fn)
     }
 
+    // 社区资源这一层切页签时会整个卸载：搜索框里的字、分类、页码、已经读到的列表、
+    // 打开着的整合包详情，都要留着——回来不该重搜一遍。存在模块里，退出程序前都在。
+    const marketUi = { value: { kind: "modpack", pack: null, plugin: null } }
+    function readMarketUi() {
+      return marketUi.value || { kind: "modpack", pack: null, plugin: null }
+    }
+    function saveMarketUi(slice, next) {
+      const cur = readMarketUi()
+      marketUi.value = { ...cur, [slice]: { ...(cur[slice] || {}), ...next } }
+    }
+    function saveMarketKind(kind) {
+      marketUi.value = { ...readMarketUi(), kind: kind === "plugin" ? "plugin" : "modpack" }
+    }
+
     // 最近一次确认过的配置：设置页来回切时会重新挂载，只读 props.status 会退回旧值
     // （比如关掉「社区资源」再切回来，开关又亮着）。这里存一份，挂载时并上去。
     const liveCfg = { value: null }
@@ -2223,7 +2237,8 @@ window.__ModuleLoader__.load({
     // 两层：外层管左侧「插件 / 整合包」两个大类，里层各自是独立的浏览面板。
     // 整合包这层就是原来的整包浏览（列表 / 详情 / 上传规则）。
     function MarketPanel(props) {
-      const [kind, setKind] = useState("modpack")
+      const [kind, setKind] = useState(() => (readMarketUi().kind === "plugin" ? "plugin" : "modpack"))
+      useEffect(() => { saveMarketKind(kind) }, [kind])
       const market = (props.status && props.status.market) || null
       const installed = Boolean(market && market.installed)
       const railBtn = (id, text, note) => h("button", {
@@ -2276,16 +2291,19 @@ window.__ModuleLoader__.load({
     function PluginBrowser(props) {
       const market = (props.status && props.status.market) || null
       const installed = Boolean(market && market.installed)
-      const [query, setQuery] = useState("")
-      const [category, setCategory] = useState("all")
-      const [sort, setSort] = useState("market")
-      const [items, setItems] = useState([])
-      const [total, setTotal] = useState(0)
-      const [page, setPage] = useState(1)
-      const [hasMore, setHasMore] = useState(false)
-      const [chips, setChips] = useState([{ id: "all", label: "全部", count: 0 }])
+      const pluginSnap = readMarketUi().plugin || {}
+      const [query, setQuery] = useState(typeof pluginSnap.query === "string" ? pluginSnap.query : "")
+      const [category, setCategory] = useState(typeof pluginSnap.category === "string" ? pluginSnap.category : "all")
+      const [sort, setSort] = useState(typeof pluginSnap.sort === "string" ? pluginSnap.sort : "market")
+      const [items, setItems] = useState(Array.isArray(pluginSnap.items) ? pluginSnap.items : [])
+      const [total, setTotal] = useState(Number(pluginSnap.total) || 0)
+      const [page, setPage] = useState(Number(pluginSnap.page) || 1)
+      const [hasMore, setHasMore] = useState(pluginSnap.hasMore === true)
+      const [chips, setChips] = useState(Array.isArray(pluginSnap.chips) && pluginSnap.chips.length ? pluginSnap.chips : [{ id: "all", label: "全部", count: 0 }])
       const [loading, setLoading] = useState(false)
       const [error, setError] = useState("")
+      // 第一屏如果有上次留下的列表，就别再打一次请求（会闪一下、还把页码冲回 1）
+      const restoredPlugins = useRef(Array.isArray(pluginSnap.items) && pluginSnap.items.length > 0)
       const applyItems = (data, append) => {
         const next = Array.isArray(data.items) ? data.items : []
         setItems(append ? (prev) => prev.concat(next) : next)
@@ -2297,8 +2315,13 @@ window.__ModuleLoader__.load({
         }
       }
       // 分类直接沿用插件市场目录的口径：服务端按 label 过滤，前端只拿一页
+      // 退出程序前一直留着：搜索框文字、分类、排序、页码与已读到的列表
+      useEffect(() => {
+        saveMarketUi("plugin", { query, category, sort, items, total, page, hasMore, chips })
+      }, [query, category, sort, items, total, page, hasMore, chips])
       useEffect(() => {
         if (!installed) return undefined
+        if (restoredPlugins.current) { restoredPlugins.current = false; return undefined }
         let alive = true
         const timer = setTimeout(() => {
           setLoading(true)
@@ -2378,26 +2401,31 @@ window.__ModuleLoader__.load({
 
     // ===== [区块] 页签三：社区资源：整合包浏览（列表 / 详情 / 上传规则） =====
     function ModpackBrowser(props) {
-      const [view, setView] = useState("list")
-      const [summary, setSummary] = useState(null)
-      const [items, setItems] = useState([])
-      const [total, setTotal] = useState(0)
-      const [page, setPage] = useState(1)
-      const [hasMore, setHasMore] = useState(false)
-      const [query, setQuery] = useState("")
-      const [category, setCategory] = useState("all")
-      const [sort, setSort] = useState("new")
-      const [loading, setLoading] = useState(true)
+      const packSnap = readMarketUi().pack || {}
+      const [view, setView] = useState(packSnap.view === "detail" || packSnap.view === "rules" ? packSnap.view : "list")
+      const [summary, setSummary] = useState(packSnap.summary || null)
+      const [items, setItems] = useState(Array.isArray(packSnap.items) ? packSnap.items : [])
+      const [total, setTotal] = useState(Number(packSnap.total) || 0)
+      const [page, setPage] = useState(Number(packSnap.page) || 1)
+      const [hasMore, setHasMore] = useState(packSnap.hasMore === true)
+      const [query, setQuery] = useState(typeof packSnap.query === "string" ? packSnap.query : "")
+      const [category, setCategory] = useState(typeof packSnap.category === "string" ? packSnap.category : "all")
+      const [sort, setSort] = useState(typeof packSnap.sort === "string" ? packSnap.sort : "new")
+      const [loading, setLoading] = useState(!(packSnap.dataReady === true))
       const [searching, setSearching] = useState(false)
       const [syncing, setSyncing] = useState(false)
       const [error, setError] = useState("")
       const [msg, setMsg] = useState("")
-      const [detail, setDetail] = useState(null)
+      const [detail, setDetail] = useState(packSnap.detail || null)
       const [downloading, setDownloading] = useState(false)
       const [reloadKey, setReloadKey] = useState(0)
       const [searchTick, setSearchTick] = useState(0)
       const mounted = useRef(true)
       useEffect(() => () => { mounted.current = false }, [])
+      // 退出程序前一直留着：搜索框文字、分类、排序、页码、读到的列表、打开着的详情/规则页
+      useEffect(() => {
+        saveMarketUi("pack", { view, summary, items, total, page, hasMore, query, category, sort, detail, dataReady: true })
+      }, [view, summary, items, total, page, hasMore, query, category, sort, detail])
 
       const applyData = (data) => {
         if (!data) return
@@ -2407,7 +2435,9 @@ window.__ModuleLoader__.load({
         setHasMore(Boolean(data.hasMore))
       }
 
+      const restoredPack = useRef(packSnap.dataReady === true)
       useEffect(() => {
+        if (restoredPack.current) { restoredPack.current = false; return undefined }
         let alive = true
         setLoading(true)
         api("/market").then((data) => {
@@ -2421,8 +2451,11 @@ window.__ModuleLoader__.load({
       const retry = () => { setError(""); setMsg(""); setLoading(true); setReloadKey((n) => n + 1) }
 
       // 搜索 / 分类 / 排序都走服务端分页：客户端只拿一页，目录再大也不卡
+      const skipFirstSearch = useRef(packSnap.dataReady === true)
       useEffect(() => {
         if (loading) return undefined
+        // 回来时上次的列表还在，没必要为同一组条件再查一遍
+        if (skipFirstSearch.current) { skipFirstSearch.current = false; return undefined }
         let alive = true
         const timer = setTimeout(() => {
           setSearching(true)
@@ -3031,6 +3064,8 @@ window.__ModuleLoader__.load({
 
     exports.apply = apply
     exports.MarketPanel = MarketPanel
+    // 自测用：社区资源那层「切页签也保留」的状态存在模块里，测试要能塞一份进去看恢复得对不对
+    exports.__marketUi = marketUi
     exports.PluginBrowser = PluginBrowser
     exports.ModpackBrowser = ModpackBrowser
     exports.inject = inject
