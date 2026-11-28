@@ -81,7 +81,7 @@ docs/DETAIL.md      插件详情页正文（locale 的 meta.detail 指向它）
 
 Host 侧：所有 HTTP 路由、打包/安装/市场编排、任务队列与进度
 
-### `client.js`（2837 行）
+### `client.js`（3131 行）
 
 客户端：打包 / 安装·导入 / 社区资源 / 设置与记录 四块界面 + 悬浮进度窗
 
@@ -161,7 +161,7 @@ dsh-modpack.json 的构造、归一化、校验与包内 README 生成
 - `normalizeManifest` L85（导出）
 - `buildReadme` L148（导出）
 
-### `lib/market-catalog.mjs`（418 行）
+### `lib/market-catalog.mjs`（424 行）
 
 插件市场目录（分类 + 分页搜索 + 已装优先），数据源是 npm 包 dsh-plugin-catalog
 
@@ -170,17 +170,17 @@ dsh-modpack.json 的构造、归一化、校验与包内 README 生成
 - `PAGE_SIZE_DEFAULT` L55（导出常量）
 - `catalogPaths` L60（导出）
 - `categoriesOf` L68（导出）
-- `normalizePlugin` L86
-- `buildIndex` L122（导出）
-- `readIndex` L142（导出）
-- `writeIndex` L166（导出）
-- `catalogSummary` L174（导出）
-- `fetchSource` L203
-- `syncCatalog` L218（导出）
-- `relevance` L247
-- `searchCatalog` L282（导出）
-- `categoryMapFor` L386（导出）
-- `lookupPlugins` L398（导出）
+- `normalizePlugin` L85
+- `buildIndex` L121（导出）
+- `readIndex` L141（导出）
+- `writeIndex` L165（导出）
+- `catalogSummary` L173（导出）
+- `fetchSource` L202
+- `syncCatalog` L217（导出）
+- `relevance` L246
+- `searchCatalog` L286（导出）
+- `categoryMapFor` L392（导出）
+- `lookupPlugins` L404（导出）
 
 ### `lib/modpack-catalog.mjs`（356 行）
 

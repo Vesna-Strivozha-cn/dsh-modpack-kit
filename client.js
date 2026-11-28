@@ -90,6 +90,9 @@ window.__ModuleLoader__.load({
     // 详情页里每个插件的介绍取自插件市场目录（dsh-plugin-catalog），按名字缓存一份，
     // 同一个插件反复打开详情不必再问一遍。
     const pluginDescCache = new Map()
+    function hasPluginDesc(name) {
+      return pluginDescCache.has(name)
+    }
     function cachedPluginDesc(name) {
       const hit = pluginDescCache.get(name)
       return hit && hit.description ? hit.description : ""
@@ -2441,7 +2444,7 @@ window.__ModuleLoader__.load({
         if (view !== "detail" || !detail) return undefined
         const plugins = Array.isArray(detail.plugins) ? detail.plugins : []
         const missing = plugins
-          .filter((plugin) => plugin && plugin.name && !(plugin.description && String(plugin.description).trim()) && !cachedPluginDesc(plugin.name))
+          .filter((plugin) => plugin && plugin.name && !(plugin.description && String(plugin.description).trim()) && !hasPluginDesc(plugin.name))
           .map((plugin) => plugin.name)
         if (missing.length === 0) return undefined
         let alive = true
@@ -2452,7 +2455,9 @@ window.__ModuleLoader__.load({
             let hit = 0
             for (const name of missing) {
               const item = items[name]
-              if (item && item.description) { pluginDescCache.set(name, item); hit += 1 }
+              // 市场里没有的也记一笔空值：下次打开这份详情不再重复问
+              pluginDescCache.set(name, item && item.description ? item : { description: "" })
+              if (item && item.description) hit += 1
             }
             if (hit > 0) setDescTick((n) => n + 1)
           })

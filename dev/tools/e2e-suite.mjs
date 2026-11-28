@@ -341,15 +341,27 @@ try {
     const targetDir = path.join(dshHome(), 'profiles', p2)
     const pkg = readJson(path.join(targetDir, 'package.json'))
     const names = fullInspected.manifest.plugins.map((p) => p.name)
+    // 安装器对完整包的口径：联网且清单里有确定版本时先按 名字@版本 走市场版（插件市场才认这是市场版），
+    // 取不到才退回包内副本（file: 指向 vendor）。所以依赖要么是 semver，要么是 file:，二者都必须合法。
+    let marketCount = 0
+    let vendorCount = 0
     for (const name of names) {
-      assert.ok(pkg.dependencies && pkg.dependencies[name], '安装器没写依赖：' + name)
-      assert.match(String(pkg.dependencies[name]), /^file:/, '完整版依赖应指向 vendor：' + name)
+      const spec = String((pkg.dependencies && pkg.dependencies[name]) || '')
+      assert.ok(spec, '安装器没写依赖：' + name)
+      if (/^file:/u.test(spec)) {
+        assert.match(spec, /vendor/u, 'file: 依赖应指向 vendor：' + name + ' → ' + spec)
+        vendorCount += 1
+      } else {
+        assert.match(spec, /^[\^~]?\d+\.\d+\.\d+/u, '依赖既不是 vendor 也不是市场版本：' + name + ' → ' + spec)
+        marketCount += 1
+      }
     }
+    assert.equal(marketCount + vendorCount, names.length, '依赖条数应与插件数一致')
     assert.deepEqual(readBundles(pkg), [], '--no-bundles 时不该登记 bundle')
     const nodeModules = fs.readdirSync(path.join(targetDir, 'node_modules'))
     assert.ok(names.some((name) => nodeModules.includes(name)) || nodeModules.includes('@'), 'node_modules 里应有插件')
     log('      ' + run.out.split('\n').filter(Boolean).slice(-3).join(' / '))
-    return names.length + ' 个依赖指向 vendor'
+    return names.length + ' 个依赖（市场版 ' + marketCount + ' / 包内副本 ' + vendorCount + '）'
   })
 
   await step('再跑一次安装器：已装的会告知并跳过，并提示 --replace', async () => {
