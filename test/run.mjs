@@ -2174,6 +2174,21 @@ test('社区资源：切到别的页再回来，大类、搜索框文字与列�
   assert(cli.includes('exports.__marketUi = marketUi'), '给自测留个入口')
 })
 
+test('社区资源详情：插件介绍取自插件市场目录，且能整块收起；底下两句是干脆话', () => {
+  const cli = fs.readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert(cli.includes('const pluginDescCache = new Map()'), '插件介绍要按名字缓存')
+  assert(cli.includes('function cachedPluginDesc(name)'), '要能读缓存')
+  assert(cli.includes('api("/catalog/lookup", { names: missing.slice(0, 200) })'), '包里没写说明时去问插件市场目录')
+  assert(cli.includes('const pluginDescOf = (plugin) =>'), '介绍要有一个统一取值函数')
+  assert(cli.includes('插件市场里没有它的介绍。'), '市场也没有时给一句实话，而不是甩锅给作者')
+  assert(!cli.includes('作者没写这个插件的说明'), '不该再拿「作者没写说明」当默认文案')
+  assert(cli.includes('onClick: () => setDescOpen(!descOpen)'), '介绍要能折叠')
+  assert(cli.includes('descOpen ? "收起介绍" : "显示介绍"'), '折叠按钮文案')
+  assert(cli.includes('descOpen ? h("span", { style: hint }, pluginDescOf(plugin)) : null'), '收起时只留插件名与版本')
+  assert(cli.includes('安装时按上面的版本从插件市场取包；取不到就明确报错，不会拿别的东西顶替。'), '底下第一句改成明确口径')
+  assert(cli.includes('这里只数清单里的顶层插件；像壁纸引擎那样由插件自己带的一组组件不算在里面，装好后由那个插件自己管理。'), '底下第二句改成明确口径')
+})
+
 test('打包版本只记客户端给的那一版，不向 registry 校验；兼容建议跟打包策略走', () => {
   const pack = fs.readFileSync(new URL('../lib/pack.mjs', import.meta.url), 'utf8')
   assert(!/Object\.keys\(versions\)\[0\]/u.test(pack), '不能再用 versions 的第一个键当版本（那是最老的版本）')

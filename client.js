@@ -87,6 +87,13 @@ window.__ModuleLoader__.load({
 
     // 社区资源这一层切页签时会整个卸载：搜索框里的字、分类、页码、已经读到的列表、
     // 打开着的整合包详情，都要留着——回来不该重搜一遍。存在模块里，退出程序前都在。
+    // 详情页里每个插件的介绍取自插件市场目录（dsh-plugin-catalog），按名字缓存一份，
+    // 同一个插件反复打开详情不必再问一遍。
+    const pluginDescCache = new Map()
+    function cachedPluginDesc(name) {
+      const hit = pluginDescCache.get(name)
+      return hit && hit.description ? hit.description : ""
+    }
     const marketUi = { value: { kind: "modpack", pack: null, plugin: null } }
     function readMarketUi() {
       return marketUi.value || { kind: "modpack", pack: null, plugin: null }
@@ -2417,6 +2424,8 @@ window.__ModuleLoader__.load({
       const [error, setError] = useState("")
       const [msg, setMsg] = useState("")
       const [detail, setDetail] = useState(packSnap.detail || null)
+      const [descOpen, setDescOpen] = useState(packSnap.descOpen !== false)
+      const [descTick, setDescTick] = useState(0)
       const [downloading, setDownloading] = useState(false)
       const [reloadKey, setReloadKey] = useState(0)
       const [searchTick, setSearchTick] = useState(0)
@@ -2426,6 +2435,37 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         saveMarketUi("pack", { view, summary, items, total, page, hasMore, query, category, sort, detail, dataReady: true })
       }, [view, summary, items, total, page, hasMore, query, category, sort, detail])
+
+      // 打开详情时补齐插件介绍：包里写了就用包里的，没写就问插件市场的目录
+      useEffect(() => {
+        if (view !== "detail" || !detail) return undefined
+        const plugins = Array.isArray(detail.plugins) ? detail.plugins : []
+        const missing = plugins
+          .filter((plugin) => plugin && plugin.name && !(plugin.description && String(plugin.description).trim()) && !cachedPluginDesc(plugin.name))
+          .map((plugin) => plugin.name)
+        if (missing.length === 0) return undefined
+        let alive = true
+        api("/catalog/lookup", { names: missing.slice(0, 200) })
+          .then((data) => {
+            if (!alive) return
+            const items = (data && data.items) || {}
+            let hit = 0
+            for (const name of missing) {
+              const item = items[name]
+              if (item && item.description) { pluginDescCache.set(name, item); hit += 1 }
+            }
+            if (hit > 0) setDescTick((n) => n + 1)
+          })
+          .catch(() => {})
+        return () => { alive = false }
+      }, [view, detail])
+
+      const pluginDescOf = (plugin) => {
+        if (plugin.description && String(plugin.description).trim()) return String(plugin.description)
+        const cached = cachedPluginDesc(plugin.name)
+        if (cached) return cached
+        return "插件市场里没有它的介绍。"
+      }
 
       const applyData = (data) => {
         if (!data) return
@@ -2628,14 +2668,21 @@ window.__ModuleLoader__.load({
                 ? h("div", { style: hint }, "本机已装 " + pack.installed.count + " / " + plugins.length + " 个，安装时会先跳过已装的那些。")
                 : null),
           h("div", { style: { border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "10px", padding: "12px", display: "flex", flexDirection: "column", gap: "6px" } },
-            h("span", { style: strong }, "包含的插件（这些插件会干什么）"),
+            h("div", { style: { ...row, justifyContent: "space-between" } },
+              h("span", { style: strong }, "包含的插件（这些插件会干什么）"),
+              plugins.length === 0 ? null : h("button", {
+                type: "button",
+                style: chipBtn,
+                title: descOpen ? "只留插件名与版本" : "显示每个插件在插件市场里的介绍",
+                onClick: () => setDescOpen(!descOpen),
+              }, descOpen ? "收起介绍" : "显示介绍")),
             plugins.length === 0
               ? h("span", { style: hint }, "清单里没有插件记录。")
               : plugins.map((plugin) => h("div", { key: "p-" + plugin.name, style: { display: "flex", flexDirection: "column", gap: "2px", borderTop: "0.5px solid var(--dsw-alias-border-l2)", paddingTop: "6px" } },
                 h("div", { style: row },
                   h("span", { style: { fontSize: "12.5px", fontWeight: 600 } }, plugin.name),
                   h(Tag, null, plugin.version ? "@" + plugin.version : "@市场最新")),
-                h("span", { style: hint }, plugin.description || "作者没写这个插件的说明。"))),
+                descOpen ? h("span", { style: hint }, pluginDescOf(plugin)) : null)),
             h("span", { style: hint }, "安装时按上面的版本从插件市场取包；取不到就明确报错，不会拿别的东西顶替。"),
             h("span", { style: hint }, "这里只数清单里的顶层插件；像壁纸引擎那样由插件自己带的一组组件不算在里面，装好后由那个插件自己管理。")),
           h("div", { style: { border: "1px dashed var(--dsw-alias-border-l2)", borderRadius: "10px", padding: "12px", display: "flex", flexDirection: "column", gap: "6px" } },
