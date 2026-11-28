@@ -31,7 +31,7 @@ dsh plugin --profile desktop add github:Vesna-Strivozha-cn/dsh-modpack-kit
 
 重启 DSH 后左侧栏出现「整合包」；设置页与插件页里也能打开（三处各一个开关，至少留一处）。
 
-npm 包页：<https://www.npmjs.com/package/dsh-modpack-kit>（不想装 npm 的话上面那条 GitHub 直装也行）。
+npm 包页：[https://www.npmjs.com/package/dsh-modpack-kit](https://www.npmjs.com/package/dsh-modpack-kit)（不想装 npm 的话上面那条 GitHub 直装也行）。
 
 ## 打包策略
 
@@ -61,14 +61,14 @@ npm 包页：<https://www.npmjs.com/package/dsh-modpack-kit>（不想装 npm 的
   node install/install.mjs --profile desktop      # Windows / 任意平台
   ```
 
-  可选 `--dry-run`（只演练）、`--offline`（不联网）、`--no-bundles`（装好先不启用）、`--replace`（覆盖已装）。
+可选 `--dry-run`（只演练）、`--offline`（不联网）、`--no-bundles`（装好先不启用）、`--replace`（覆盖已装）。
 
 * **在插件里导入**：可逐插件勾选，缺依赖 / 引擎不符的置顶显示，每个带配置的插件可选「包内配置 / 保持本机」，装后整体启用，装后同步市场分组。
 * 已装的默认跳过，可选换成包内版本。
 
 ## 社区资源
 
-整合包列表里的**体量词条**不靠作者申报，按包里插件总数自动算：0-3 个「轻量」、4-8「中型」、9-12「大型」、13 个以上「大宗」。分类里还有一个**「水槽」**——一个包里的插件横跨三种以上使用场景时，目录构建会把它自动归到这里，不用作者硬塞进某个单一分类。
+整合包列表里的**体量词条**不靠作者申报，按包里插件总数自动算：0-3 个「轻量」、4-8「中型」、9-12「大型」、13 个以上「大宗」。分类里还有一个\*\*「水槽」\*\*——一个包里的插件横跨三种以上使用场景时，目录构建会把它自动归到这里，不用作者硬塞进某个单一分类。
 
 界面语言除了设置页、标签页和按钮，连市场里的分类名、体量词条、搜索卡与详情说明也一起切；整合包说明优先显示英文（作者没写英文时回落中文）。
 
@@ -114,9 +114,9 @@ AI 搜索花的 token 记在插件市场那边（它用你在「设置 → 模�
 ## 开发
 
 ```bash
-ELECTRON\_RUN\_AS\_NODE=1 "<DeepSeek Harness.exe>" test/run.mjs          # 单元测试
-ELECTRON\_RUN\_AS\_NODE=1 "<DeepSeek Harness.exe>" test/host-smoke.mjs    # HTTP 冒烟
-ELECTRON\_RUN\_AS\_NODE=1 "<DeepSeek Harness.exe>" dev/tools/e2e-suite.mjs # 端到端
+ELECTRON\\\_RUN\\\_AS\\\_NODE=1 "<DeepSeek Harness.exe>" test/run.mjs          # 单元测试
+ELECTRON\\\_RUN\\\_AS\\\_NODE=1 "<DeepSeek Harness.exe>" test/host-smoke.mjs    # HTTP 冒烟
+ELECTRON\\\_RUN\\\_AS\\\_NODE=1 "<DeepSeek Harness.exe>" dev/tools/e2e-suite.mjs # 端到端
 ```
 
 改完源码要 `node dev/tools/sync.cjs` 同步到 profile 副本（profile 里是硬链接拷贝，不是软链），再 `node dev/tools/verify.cjs` 校验。
@@ -125,17 +125,13 @@ ELECTRON\_RUN\_AS\_NODE=1 "<DeepSeek Harness.exe>" dev/tools/e2e-suite.mjs # 端
 
 ## 更新日志
 
-* **0.2.3**：插件页新增「社区资源」（原「整合包市场」改名），左侧像 PCL 一样分「整合包 / 插件」两层：
-
-  * 整合包这一层浏览自建目录仓库：按名称/作者/插件名搜索，按类型与排序筛选，已装的排前面；点开看简介、包含的插件与用途、下载量与下载码。
-  * 条目里的名称、作者、介绍、插件清单**一律取包里的 `dsh-modpack.json`**（打包时填的），条目文件只写定位字段，写了两边不一致会被构建挡下。
-  * 下载量只算「这个安装文件本身」，Git 仓库没有逐文件计数就显示「下载量未统计」，不再拿包里插件的 npm 下载量相加、也不假装 0；另加「上次更新」与顶层插件数。
-  * 按插件总数自动标「轻量 / 中型 / 大型 / 大宗」，跨三类以上的归到新增的「水槽」；类型与排序的次序跟插件市场自己声明的一致。
-  * 检索加目录缓存、小写索引与 20 秒结果缓存；切到别的页签再回来，大类、搜索框文字、分类与排序、页码与已读列表、打开着的详情都保留。
-  * 详情里每个插件的介绍取自插件市场目录（包里没写就问市场），整块可「收起介绍」；下载后内存里核对 sha256 与体积、跑安全检测，再交回安装页按原流程装，进度仍在悬浮窗。
-  * 附属功能、默认开启，设置里可关，关掉当场生效。
-
-  另外这一版还改了四处口径：
+* **0.2.3**：插件页新增「社区资源」栏目。欢迎各位上传分享测试（大概会有人？）
+* 整合包这一层浏览自建目录仓库：按名称/作者/插件名搜索，按类型与排序筛选，已装的排前面；点开看简介、包含的插件与用途、下载量与下载码。
+* 条目里的名称、作者、介绍、插件清单**一律取包里的 `dsh-modpack.json`**（打包时填的），条目文件只写定位字段，写了两边不一致会被构建挡下。
+* 按插件总数自动标「轻量 / 中型 / 大型 / 大宗」，跨三类以上的归到新增的「水槽」；类型与排序的次序跟插件市场自己声明的一致。
+* 检索加目录缓存、小写索引与 20 秒结果缓存；切到别的页签再回来，大类、搜索框文字、分类与排序、页码与已读列表、打开着的详情都保留。
+* 详情里每个插件的介绍取自插件市场目录（包里没写就问市场），整块可「收起介绍」；下载后内存里核对 sha256 与体积、跑安全检测，再交回安装页按原流程装，进度仍在悬浮窗。
+* 附属功能、默认开启，设置里可关，关掉当场生效。
 
   * 轻量包与混合包里「只记版本」的插件不再写死版本号，安装时按名字取市场最新（`latest: true`）；打包也不再向 registry 校验版本号，只有完整包会真的下载并核对代码。
   * 同一个组名被两个整合包用到时，后来的自动变成「名字 2」「名字 3」并在状态里标明来源，不再互相污染。
@@ -170,5 +166,5 @@ ELECTRON\_RUN\_AS\_NODE=1 "<DeepSeek Harness.exe>" dev/tools/e2e-suite.mjs # 端
 
 项目地址：[https://github.com/Vesna-Strivozha-cn/dsh-modpack-kit](https://github.com/Vesna-Strivozha-cn/dsh-modpack-kit) —— 如果它省了时间，欢迎点个 Star。
 
-npm 包页：<https://www.npmjs.com/package/dsh-modpack-kit>
+npm 包页：[https://www.npmjs.com/package/dsh-modpack-kit](https://www.npmjs.com/package/dsh-modpack-kit)
 
